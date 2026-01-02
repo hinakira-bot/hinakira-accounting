@@ -102,6 +102,33 @@ def analyze_csv(csv_bytes, history={}):
         print(f"Error in analyze_csv: {e}")
         return []
 
+# --- Google Sheets Logic (Duplicate Check) ---
+def get_existing_entries():
+    print("Fetching existing entries for duplicate check...")
+    if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
+        return set()
+    try:
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+        client = gspread.authorize(creds)
+        sh = client.open_by_key(SPREADSHEET_ID)
+        sheet = sh.worksheet("仕訳明細")
+        data = sheet.get_all_values()
+        
+        # (日付, 金額, 取引先) のセットを作成
+        existing = set()
+        if len(data) > 1:
+            for row in data[1:]:
+                if len(row) >= 5:
+                    date = row[0].strip()
+                    amount = str(row[3]).strip()
+                    counterparty = row[4].strip()
+                    existing.add(f"{date}_{amount}_{counterparty}")
+        return existing
+    except Exception as e:
+        print(f"Error fetching existing entries: {e}")
+        return set()
+
 # --- AI Logic ---
 def analyze_document(file_bytes, mime_type, history={}):
     print(f"Analyzing {mime_type} with history context...")
@@ -245,8 +272,9 @@ def api_analyze():
     if 'files' not in request.files:
         return jsonify({"error": "No files uploaded"}), 400
     
-    # 履歴を取得
+    # 履歴と既存エントリを取得
     history = get_accounting_history()
+    existing_entries = get_existing_entries()
     
     files = request.files.getlist('files')
     all_results = []
@@ -259,8 +287,15 @@ def api_analyze():
         if filename.endswith('.csv'):
             results = analyze_csv(file_bytes, history)
         else:
-            # 画像もPDFもanalyze_documentで処理（mime_typeを渡す）
             results = analyze_document(file_bytes, mime_type, history)
+            
+        # 重複チェックのタグ付け
+        for item in results:
+            key = f"{item.get('date', '')}_{item.get('amount', '')}_{item.get('counterparty', '')}"
+            if key in existing_entries:
+                item['is_duplicate'] = True
+            else:
+                item['is_duplicate'] = False
             
         all_results.extend(results)
     

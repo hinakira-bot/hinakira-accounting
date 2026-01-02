@@ -87,8 +87,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderResults(data) {
         resultsTable.innerHTML = '';
+        let hasDuplicate = false;
+
         data.forEach((item, index) => {
+            if (item.is_duplicate) hasDuplicate = true;
+
             const row = document.createElement('tr');
+            if (item.is_duplicate) row.classList.add('duplicate');
+
             row.innerHTML = `
                 <td><input type="text" value="${item.date || ''}" data-index="${index}" data-key="date"></td>
                 <td><input type="text" value="${item.debit_account || ''}" data-index="${index}" data-key="debit_account"></td>
@@ -99,6 +105,16 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             resultsTable.appendChild(row);
         });
+
+        // 重複警告の表示制御
+        const duplicateAlert = document.getElementById('duplicate-alert');
+        if (hasDuplicate) {
+            duplicateAlert.classList.remove('hidden');
+            duplicateAlert.style.display = 'flex';
+        } else {
+            duplicateAlert.classList.add('hidden');
+            duplicateAlert.style.display = 'none';
+        }
 
         // Add event listeners to inputs to update extractedData
         resultsTable.querySelectorAll('input').forEach(input => {

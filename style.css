@@ -68,8 +68,13 @@ body {
 }
 
 @keyframes move {
-    from { transform: translate(0, 0) scale(1); }
-    to { transform: translate(50px, 50px) scale(1.1); }
+    from {
+        transform: translate(0, 0) scale(1);
+    }
+
+    to {
+        transform: translate(50px, 50px) scale(1.1);
+    }
 }
 
 .container {
@@ -168,8 +173,13 @@ header p {
 }
 
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 .preview-card {
@@ -190,6 +200,32 @@ table {
     width: 100%;
     border-collapse: collapse;
     min-width: 600px;
+}
+
+tr.duplicate {
+    background-color: rgba(255, 193, 7, 0.15);
+}
+
+tr.duplicate input {
+    color: #856404;
+    font-weight: 500;
+}
+
+#duplicate-alert {
+    background: rgba(255, 193, 7, 0.2);
+    border: 1px solid rgba(255, 193, 7, 0.5);
+    color: #856404;
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 0.9rem;
+    display: none;
+    align-items: center;
+    gap: 10px;
+}
+
+#duplicate-alert svg {
+    flex-shrink: 0;
 }
 
 th {
@@ -214,7 +250,8 @@ td {
     justify-content: flex-end;
 }
 
-.primary-btn, .secondary-btn {
+.primary-btn,
+.secondary-btn {
     padding: 0.75rem 1.5rem;
     border-radius: 12px;
     font-weight: 600;
