@@ -291,19 +291,22 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             if not vals:
                 ws.append_row(headers)
                 ws.freeze(rows=1)
-                try:
-                    rule = gspread.utils.ValidationCondition(
-                        "ONE_OF_RANGE",
-                        ["=勘定科目マスタ!$A$2:$A$100"]
-                    )
-                    ws.set_data_validation("B2:B1000", rule)
-                    ws.set_data_validation("C2:C1000", rule)
-                except Exception as ex:
-                    print(f"Validation Error (Ignored): {ex}")
-            # If headers exist but mismatch (old order), we might want to warn or let user fix. 
-            # For SaaS, we can try to update header row if empty or if we want to enforce it.
-            # But changing columns on existing data mixes data. 
-            # Ideally we'd map correctly, but for now assuming clean sheet or user handles column shift.
+                
+            # SAFETY: Ensure at least 8 columns exist for the new layout/Query
+            try:
+                if ws.col_count < 8:
+                    ws.resize(cols=8)
+            except: pass
+
+            try:
+                rule = gspread.utils.ValidationCondition(
+                    "ONE_OF_RANGE",
+                    ["=勘定科目マスタ!$A$2:$A$100"]
+                )
+                ws.set_data_validation("B2:B1000", rule)
+                ws.set_data_validation("C2:C1000", rule)
+            except Exception as ex:
+                print(f"Validation Error (Ignored): {ex}")
             return ws
 
         sheet_auto = init_detail_sheet("仕訳明細")
@@ -319,8 +322,16 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             c_acc = item.get('credit_account', '').strip()
             if c_acc not in valid_accounts and c_acc != "": c_acc = "雑費"
             
+            # Clean Amount (remove commas, yen sign, ensure int)
+            raw_amt = str(item.get('amount', 0)).replace(',', '').replace('¥', '').replace('円', '').strip()
+            try:
+                clean_amt = int(float(raw_amt)) # float first to handle '1000.0'
+            except:
+                clean_amt = 0
+
             item['debit_account'] = d_acc
             item['credit_account'] = c_acc
+            item['amount'] = clean_amt
             sanitized_data.append(item)
 
         # 4. Save Data (New Order)
