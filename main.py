@@ -332,7 +332,8 @@ def save_to_sheets(data, spreadsheet_id, access_token):
         sheet_pl.update("A3", [["【経費 (借方)】", "金額", "", "【売上 (貸方)】", "金額"]])
         
         # Exclude B/S items from P/L
-        bs_items_list = "'現金','小口現金','普通預金','売掛金','未収入金','棚卸資産','買掛金','未払金','借入金','預り金','資本金','元入金','事業主貸','事業主借'"
+        # Regex for matches must be 'A|B|C'
+        bs_items_list = "'現金|小口現金|普通預金|売掛金|未収入金|棚卸資産|買掛金|未払金|借入金|預り金|資本金|元入金|事業主貸|事業主借'"
         
         # Debit (Expenses)
         # Query: Select Col2, Sum(Col4) Where Not Col2 matches BS_Items
