@@ -145,8 +145,11 @@ def get_analysis_prompt(history_str, input_text_or_type):
         - 10%標準対象 → 税込金額から計算。
         - 8%軽減税率（飲食料品など） → 8%で計算。
         - 非課税/不課税（給料、保険料、税金支払い、預金移動、借入返済など） → 消費税額は **0**。
-    
-    【過去の学習データ】
+    6. **摘要 (Memo)**:
+        - **最重要**: 過去の履歴（下記）に類似の取引先がある場合、その「摘要」を極力踏襲または参考にしてください。
+        - 履歴がない場合、単なる科目名ではなく「具体的な内容」を推測して記載してください（例：「会議費」ではなく「〇〇プロジェクト打ち合わせ」など）。
+
+    【過去の学習データ (取引先: 摘要 => 科目)】
     {history_str}
     
     以下のJSON形式（配列）で出力してください。Markdownは不要です。
@@ -158,7 +161,7 @@ def get_analysis_prompt(history_str, input_text_or_type):
         "amount": 税込金額(数値),
         "tax_amount": 消費税額(数値・推定),
         "counterparty": "取引先名",
-        "memo": "摘要"
+        "memo": "摘要(履歴を優先)"
       }}
     ]
     """
@@ -177,7 +180,8 @@ def analyze_csv(csv_bytes, history=[]):
         csv_text = "\n".join([",".join(row) for row in rows[:60]]) # Limit context
         
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        history_str = "\n".join([f"- {h['counterparty']} => {h['account']}" for h in history[:50]]) # Limit history
+        # History format: Counterparty: Memo => Account
+        history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
         
         prompt = get_analysis_prompt(history_str, "CSV明細（クレジットカードまたは銀行）") + f"\n\nデータ:\n{csv_text}"
         
@@ -192,7 +196,7 @@ def analyze_csv(csv_bytes, history=[]):
 def analyze_document(file_bytes, mime_type, history=[]):
     print(f"Analyzing {mime_type}...")
     models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
-    history_str = "\n".join([f"- {h['counterparty']} => {h['account']}" for h in history[:50]])
+    history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
 
     for model_name in models:
         try:
