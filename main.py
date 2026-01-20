@@ -922,14 +922,23 @@ def api_predict():
         content = CleanJSON(response.text)
         predictions = json.loads(content)
         
-        # Enforce user overrides (Programmatic Safety Net)
-        # If user provided a specific debit/credit, correct the AI if it hallucinated/changed it.
-        for pred in predictions:
-            original = next((item for item in data if item['index'] == pred['index']), None)
-            if original:
-                if original.get('debit'): pred['debit'] = original['debit']
-                if original.get('credit'): pred['credit'] = original['credit']
+        print(f"DEBUG: Original Data: {data}")
+        print(f"DEBUG: AI Predictions: {predictions}")
         
+        # Enforce user overrides (Programmatic Safety Net)
+        for pred in predictions:
+            # Robust index matching (handle str/int mismatch)
+            p_idx = int(pred.get('index', -1))
+            original = next((item for item in data if int(item.get('index', -2)) == p_idx), None)
+            
+            if original:
+                # If user provided a non-empty string for debit/credit, USE IT.
+                if original.get('debit') and str(original['debit']).strip(): 
+                    pred['debit'] = original['debit']
+                if original.get('credit') and str(original['credit']).strip(): 
+                    pred['credit'] = original['credit']
+        
+        print(f"DEBUG: Final Response: {predictions}")
         return jsonify(predictions)
     except Exception as e:
         print(f"Prediction Error: {e}")
