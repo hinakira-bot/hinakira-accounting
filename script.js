@@ -307,6 +307,67 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // --- Auto Predict Logic ---
+    const autoPredictBtn = document.getElementById('auto-predict-btn');
+    if (autoPredictBtn) {
+        autoPredictBtn.addEventListener('click', () => {
+            // 1. Find targets (Empty Accounts + Filled Counterparty/Memo)
+            const targets = extractedData.map((item, idx) => ({ ...item, index: idx }))
+                .filter(item => (!item.debit_account && !item.credit_account) && (item.counterparty || item.memo));
+
+            if (targets.length === 0) {
+                alert("自動判定できる行がありません。（取引先か摘要を入力し、科目を空欄にしてください）");
+                return;
+            }
+
+            const apiKey = localStorage.getItem('gemini_api_key');
+            const sheetId = localStorage.getItem('spreadsheet_id');
+
+            if (!apiKey || !sheetId) {
+                alert("設定（APIキー・シートID）が不足しています。");
+                return;
+            }
+
+            autoPredictBtn.disabled = true;
+            autoPredictBtn.textContent = '判定中...';
+
+            fetch('/api/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    data: targets.map(t => ({ index: t.index, counterparty: t.counterparty, memo: t.memo })),
+                    gemini_api_key: apiKey,
+                    spreadsheet_id: sheetId,
+                    access_token: accessToken
+                })
+            })
+                .then(res => res.json())
+                .then(predictions => {
+                    if (predictions.error) throw new Error(predictions.error);
+
+                    let count = 0;
+                    predictions.forEach(p => {
+                        if (extractedData[p.index]) {
+                            if (p.debit) extractedData[p.index].debit_account = p.debit;
+                            if (p.credit) extractedData[p.index].credit_account = p.credit;
+                            count++;
+                        }
+                    });
+
+                    renderResults(extractedData);
+                    alert(`${count}件の科目を判定しました！`);
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert(`エラー: ${err.message}`);
+                })
+                .finally(() => {
+                    autoPredictBtn.disabled = false;
+                    autoPredictBtn.textContent = '✨ 科目を自動判定';
+                });
+        });
+    }
+
     sendBtn.addEventListener('click', () => {
         const apiKey = localStorage.getItem('gemini_api_key');
         const sheetId = localStorage.getItem('spreadsheet_id');

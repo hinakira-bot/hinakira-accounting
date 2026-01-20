@@ -854,6 +854,58 @@ def api_analyze():
         
     return jsonify(results)
 
+@app.route('/api/predict', methods=['POST'])
+def api_predict():
+    data = request.json.get('data', []) # List of {index, counterparty, memo}
+    spreadsheet_id = request.json.get('spreadsheet_id')
+    access_token = request.json.get('access_token') or request.headers.get('Authorization', '').replace('Bearer ', '')
+    gemini_api_key = request.json.get('gemini_api_key')
+
+    if not data or not spreadsheet_id or not access_token or not gemini_api_key:
+        return jsonify({"error": "Missing config"}), 400
+
+    genai.configure(api_key=gemini_api_key)
+    history = get_accounting_history(spreadsheet_id, access_token)
+    
+    # Format history
+    history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
+    
+    # Format input
+    input_text = "\n".join([f"ID:{item['index']} 取引先:{item['counterparty']} 摘要:{item['memo']}" for item in data])
+
+    prompt = f"""
+    あなたは日本の会計士です。
+    以下の「取引先」と「摘要」の情報から、適切な「借方勘定科目」と「貸方勘定科目」を推測してください。
+    
+    【ルール】
+    1. 過去のデータ(下記)に類似するものがあれば、その科目を採用すること。
+    2. 全く不明な場合は借方「雑費」、貸方「未払金」とすること。
+    3. 一般的な知識（例: 「タクシー」→旅費交通費、「コンビニ」→消耗品費など）を活用すること。
+    
+    【過去の学習データ】
+    {history_str}
+    
+    【推測対象データ】
+    {input_text}
+    
+    【出力フォーマット (JSON)】
+    [
+      {{"index": ID(数値), "debit": "借方科目", "credit": "貸方科目"}},
+      ...
+    ]
+    Markdownは不要です。JSONのみ出力してください。
+    """
+    
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(prompt)
+        content = CleanJSON(response.text)
+        predictions = json.loads(content)
+        return jsonify(predictions)
+    except Exception as e:
+        print(f"Prediction Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/save', methods=['POST'])
 def api_save():
     data = request.json.get('data', [])
