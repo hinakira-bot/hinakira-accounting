@@ -364,9 +364,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     let count = 0;
                     predictions.forEach(p => {
-                        if (extractedData[p.index]) {
-                            if (p.debit) extractedData[p.index].debit_account = p.debit;
-                            if (p.credit) extractedData[p.index].credit_account = p.credit;
+                        const targetRow = extractedData[p.index];
+                        if (targetRow) {
+                            // Frontend Safety Net: Only overwrite if currently empty
+                            if (p.debit && !targetRow.debit_account) targetRow.debit_account = p.debit;
+                            if (p.credit && !targetRow.credit_account) targetRow.credit_account = p.credit;
                             count++;
                         }
                     });
