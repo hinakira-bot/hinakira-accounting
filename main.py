@@ -583,55 +583,19 @@ def api_analyze():
     
     files = request.files.getlist('files')
     access_token = request.headers.get('Authorization', '').replace('Bearer ', '')
-    
-    # ... (existing analysis logic) ...
-    # This part is fine, just verify save_to_sheets call below
-    
-    # Wait, save_to_sheets is not here, it's called via /api/save usually.
-    # checking... analyze endpoint returns JSON.
-    # save_to_sheets is used in /api/save
-    return jsonify([]) # Placeholder for now, I am editing the wrong place if I want to update save_to_sheets routing.
-    # Actually, let's look at the file logic again.
-    # analyze just returns results.
-    # save logic is in /api/save (implied, let me check where it is)
-
-# (SELF-CORRECTION): I need to find the save route. 
-# Looking at previous view_file, I stopped at line 480.
-# I need to see the rest of the file to find /api/save.
-# But I can add /api/accounts here safely.
-
-@app.route('/api/save', methods=['POST'])
-def api_save():
-    data = request.json.get('data', [])
-    spreadsheet_id = request.json.get('spreadsheet_id')
-    access_token = request.headers.get('Authorization', '').replace('Bearer ', '')
-    
-    if not data or not spreadsheet_id or not access_token:
-        return jsonify({"error": "Missing data or credentials"}), 400
-        
-    success = save_to_sheets(data, spreadsheet_id, access_token)
-    if success:
-        return jsonify({"status": "success"})
-    else:
-        return jsonify({"error": "Save failed"}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5001))
-    app.run(host='0.0.0.0', port=port)
-
-    
-    api_key = request.form.get('gemini_api_key')
+    gemini_api_key = request.form.get('gemini_api_key')
     spreadsheet_id = request.form.get('spreadsheet_id')
-    access_token = request.form.get('access_token')
+    # Use access token from header if form is empty, or vice versa. 
+    # Frontend sends access_token in form data for analyze.
+    if not access_token: access_token = request.form.get('access_token')
 
-    if not api_key or not spreadsheet_id or not access_token:
+    if not gemini_api_key or not spreadsheet_id or not access_token:
         return jsonify({"error": "Missing config"}), 401
     
-    genai.configure(api_key=api_key)
+    genai.configure(api_key=gemini_api_key)
     history = get_accounting_history(spreadsheet_id, access_token)
     existing = get_existing_entries(spreadsheet_id, access_token)
     
-    files = request.files.getlist('files')
     results = []
     
     for file in files:
@@ -649,7 +613,7 @@ if __name__ == '__main__':
             
         for item in res:
             item['evidence_url'] = ev_url
-            key = f"{item.get('date')}_{item.get('amount')}_{item.get('counterparty')}"
+            key = f"{item.get('date')}_{str(item.get('amount'))}_{item.get('counterparty')}"
             item['is_duplicate'] = key in existing
         results.extend(res)
         
@@ -657,10 +621,24 @@ if __name__ == '__main__':
 
 @app.route('/api/save', methods=['POST'])
 def api_save():
-    d = request.json
-    return jsonify({"message": "Saved"}) if save_to_sheets(d.get('data'), d.get('spreadsheet_id'), d.get('access_token')) else (jsonify({"error": "Save failed"}), 500)
+    data = request.json.get('data', [])
+    spreadsheet_id = request.json.get('spreadsheet_id')
+    access_token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    
+    # In JSON body, frontend might send access_token too
+    if not access_token: access_token = request.json.get('access_token')
+    
+    if not data or not spreadsheet_id or not access_token:
+        return jsonify({"error": "Missing data or credentials"}), 400
+        
+    success = save_to_sheets(data, spreadsheet_id, access_token)
+    if success:
+        return jsonify({"status": "success"})
+    else:
+        return jsonify({"error": "Save failed"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port)
 
 
