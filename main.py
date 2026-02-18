@@ -11,14 +11,9 @@ import requests as http_requests
 from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 from dotenv import load_dotenv
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-import google.generativeai as genai
 
 import db
 import models
-import ai_service
 
 load_dotenv()
 
@@ -136,14 +131,48 @@ def get_user_id():
     return user['id'] if user else 0
 
 
+# --- Lazy imports for heavy Google libraries (reduce startup memory) ---
+_lazy_cache = {}
+
+def _get_credentials():
+    if 'Credentials' not in _lazy_cache:
+        from google.oauth2.credentials import Credentials
+        _lazy_cache['Credentials'] = Credentials
+    return _lazy_cache['Credentials']
+
+def _get_drive_build():
+    if 'build' not in _lazy_cache:
+        from googleapiclient.discovery import build
+        _lazy_cache['build'] = build
+    return _lazy_cache['build']
+
+def _get_media_upload():
+    if 'MediaIoBaseUpload' not in _lazy_cache:
+        from googleapiclient.http import MediaIoBaseUpload
+        _lazy_cache['MediaIoBaseUpload'] = MediaIoBaseUpload
+    return _lazy_cache['MediaIoBaseUpload']
+
+def _get_ai_service():
+    if 'ai_service' not in _lazy_cache:
+        import ai_service
+        _lazy_cache['ai_service'] = ai_service
+    return _lazy_cache['ai_service']
+
+def _get_genai():
+    if 'genai' not in _lazy_cache:
+        import google.generativeai as genai
+        _lazy_cache['genai'] = genai
+    return _lazy_cache['genai']
+
+
 # --- Google Drive Upload Helper ---
 def upload_to_drive(file_bytes, filename, mime_type, access_token):
     """Upload evidence file to Google Drive."""
     try:
         if not access_token:
             return ""
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
 
         folder_name = "Accounting_Evidence"
         results = service.files().list(
@@ -160,7 +189,7 @@ def upload_to_drive(file_bytes, filename, mime_type, access_token):
             folder_id = items[0]['id']
 
         file_metadata = {'name': filename, 'parents': [folder_id]}
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
+        media = _get_media_upload()(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         return file.get('webViewLink')
     except Exception as e:
@@ -204,13 +233,13 @@ def upload_to_drive_processed(file_bytes, filename, mime_type, access_token):
     try:
         if not access_token:
             return ""
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
         root_id = get_or_create_folder(service, "Accounting_Evidence")
         processed_id = get_or_create_folder(service, "processed", root_id)
 
         file_metadata = {'name': filename, 'parents': [processed_id]}
-        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
+        media = _get_media_upload()(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         return file.get('webViewLink')
     except Exception as e:
@@ -230,8 +259,8 @@ def api_drive_init():
         return jsonify({"error": "Googleログインが必要です"}), 401
 
     try:
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
         root_id = get_or_create_folder(service, "Accounting_Evidence")
         get_or_create_folder(service, "inbox", root_id)
         get_or_create_folder(service, "processed", root_id)
@@ -250,8 +279,8 @@ def api_drive_inbox_list():
 
     import sys
     try:
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
 
         root_ids = get_all_folder_ids(service, "Accounting_Evidence")
         if not root_ids:
@@ -300,13 +329,13 @@ def api_drive_inbox_analyze():
     # Get user_id from Authorization header if available
     uid = get_user_id()
 
-    ai_service.configure_gemini(gemini_api_key)
+    _get_ai_service().configure_gemini(gemini_api_key)
     history = models.get_accounting_history(user_id=uid)
     existing = models.get_existing_entry_keys(user_id=uid)
 
     try:
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
         from googleapiclient.http import MediaIoBaseDownload
 
         results = []
@@ -326,9 +355,9 @@ def api_drive_inbox_analyze():
             fbytes = buf.read()
 
             if fname.lower().endswith('.csv'):
-                res = ai_service.analyze_csv(fbytes, history)
+                res = _get_ai_service().analyze_csv(fbytes, history)
             else:
-                res = ai_service.analyze_document(fbytes, mime, history)
+                res = _get_ai_service().analyze_document(fbytes, mime, history)
 
             for item in res:
                 item['evidence_url'] = web_link
@@ -355,8 +384,8 @@ def api_drive_inbox_move():
         return jsonify({"status": "success", "moved": 0})
 
     try:
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
         root_id = get_or_create_folder(service, "Accounting_Evidence")
         processed_id = get_or_create_folder(service, "processed", root_id)
 
@@ -545,7 +574,7 @@ def api_analyze():
     if not gemini_api_key:
         return jsonify({"error": "Missing Gemini API key"}), 401
 
-    ai_service.configure_gemini(gemini_api_key)
+    _get_ai_service().configure_gemini(gemini_api_key)
 
     history = models.get_accounting_history(user_id=uid)
     existing = models.get_existing_entry_keys(user_id=uid)
@@ -561,9 +590,9 @@ def api_analyze():
             ev_url = upload_to_drive_processed(fbytes, file.filename, ftype, access_token)
 
         if fname.endswith('.csv'):
-            res = ai_service.analyze_csv(fbytes, history)
+            res = _get_ai_service().analyze_csv(fbytes, history)
         else:
-            res = ai_service.analyze_document(fbytes, ftype, history)
+            res = _get_ai_service().analyze_document(fbytes, ftype, history)
 
         for item in res:
             item['evidence_url'] = ev_url
@@ -589,7 +618,7 @@ def api_predict():
     valid_account_names = [a['name'] for a in accounts]
 
     try:
-        predictions = ai_service.predict_accounts(data, history, valid_account_names, gemini_api_key)
+        predictions = _get_ai_service().predict_accounts(data, history, valid_account_names, gemini_api_key)
         return jsonify(predictions)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -611,7 +640,7 @@ def api_chat():
     if not gemini_api_key:
         return jsonify({"error": "Gemini APIキーが設定されていません"}), 401
 
-    ai_service.configure_gemini(gemini_api_key)
+    _get_ai_service().configure_gemini(gemini_api_key)
 
     account_list = models.get_accounts()
     account_names = ", ".join([f"{a['name']}({a['code']})" for a in account_list[:40]])
@@ -647,7 +676,7 @@ def api_chat():
 """
 
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = _get_genai().GenerativeModel('gemini-2.5-flash')
 
         contents = []
         contents.append({"role": "user", "parts": [{"text": system_prompt + "\n\n（ここからユーザーとの会話開始）"}]})
@@ -837,8 +866,8 @@ def api_backup_drive_list():
         return jsonify({"error": "Googleログインが必要です"}), 401
 
     try:
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
 
         folder_name = "Accounting_Evidence"
         results = service.files().list(
@@ -877,8 +906,8 @@ def api_backup_drive_restore():
         return jsonify({"error": "ファイルが指定されていません"}), 400
 
     try:
-        creds = Credentials(token=access_token)
-        service = build('drive', 'v3', credentials=creds)
+        creds = _get_credentials()(token=access_token)
+        service = _get_drive_build()('drive', 'v3', credentials=creds)
 
         from googleapiclient.http import MediaIoBaseDownload
         request_dl = service.files().get_media(fileId=file_id)
