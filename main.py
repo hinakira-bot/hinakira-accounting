@@ -71,6 +71,7 @@ def get_current_user():
         if resp.status_code != 200:
             # Clean expired cache entry if exists
             _token_cache.pop(access_token, None)
+            print(f"Auth: Google UserInfo returned {resp.status_code}: {resp.text[:200]}")
             return None
 
         info = resp.json()
@@ -85,6 +86,7 @@ def get_current_user():
         )
 
         # Cache the result
+        print(f"Auth: User authenticated: {email} (id={user['id']})")
         _token_cache[access_token] = {
             'user': user,
             'expires': now + _TOKEN_CACHE_TTL
@@ -469,13 +471,17 @@ def api_journal_create():
     else:
         entries = [data]
 
-    ids = models.create_journal_entries_batch(entries, user_id=uid)
-    successful = [i for i in ids if i is not None]
-    return jsonify({
-        "status": "success",
-        "created": len(successful),
-        "ids": successful,
-    })
+    try:
+        ids = models.create_journal_entries_batch(entries, user_id=uid)
+        successful = [i for i in ids if i is not None]
+        return jsonify({
+            "status": "success",
+            "created": len(successful),
+            "ids": successful,
+        })
+    except Exception as e:
+        print(f"Journal create error (user_id={uid}): {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/journal/<int:entry_id>', methods=['PUT'])

@@ -259,6 +259,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             throw new Error('Unauthorized');
         }
+        if (!res.ok) {
+            console.error(`API error: ${res.status} ${res.statusText} for ${url}`);
+        }
         return res.json();
     }
 
@@ -269,7 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 populateAccountDatalist();
                 populateJBAccountFilter();
             }
-        });
+        }).catch(err => console.warn('loadAccounts failed:', err.message));
     }
 
     function populateAccountDatalist() {
@@ -521,10 +524,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadRecentEntries();
                 loadCounterparties();
             } else {
-                showToast('登録に失敗しました: ' + (res.error || ''), true);
+                showToast('登録に失敗しました: ' + (res.error || JSON.stringify(res)), true);
             }
         } catch (err) {
-            showToast('通信エラー', true);
+            console.error('Journal submit error:', err);
+            if (err.message !== 'Unauthorized') {
+                showToast('通信エラー: ' + err.message, true);
+            }
         }
     });
 
