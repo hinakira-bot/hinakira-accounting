@@ -3,12 +3,14 @@ document.addEventListener('DOMContentLoaded', () => {
     //  Section 1: Constants & State
     // ============================================================
     const CLIENT_ID = '353694435064-r6mlbk3mm2mflhl2mot2n94dpuactscc.apps.googleusercontent.com';
-    const SCOPES = 'https://www.googleapis.com/auth/drive';
+    const SCOPES = 'openid email profile https://www.googleapis.com/auth/drive';
     let tokenClient;
     let accessToken = sessionStorage.getItem('access_token');
     let tokenExpiration = sessionStorage.getItem('token_expiration');
     let accounts = [];            // Account master cache
     let scanResults = [];         // Scan tab working data
+    let isLoggingOut = false;     // Prevent 401 cascade (multiple toasts)
+    let refreshTimer = null;      // Token auto-refresh timer
     const thisYear = new Date().getFullYear();
     const thisMonth = new Date().getMonth() + 1;
 
@@ -42,14 +44,19 @@ document.addEventListener('DOMContentLoaded', () => {
             callback: (resp) => {
                 if (resp.access_token) {
                     accessToken = resp.access_token;
-                    const exp = new Date().getTime() + (resp.expires_in * 1000);
+                    const expiresIn = resp.expires_in || 3600;
+                    const exp = new Date().getTime() + (expiresIn * 1000);
                     sessionStorage.setItem('access_token', accessToken);
                     sessionStorage.setItem('token_expiration', exp);
+                    scheduleTokenRefresh(expiresIn);
                     onLoginSuccess();
                 }
             },
         });
         if (accessToken && tokenExpiration && new Date().getTime() < parseInt(tokenExpiration)) {
+            // Schedule refresh for remaining time
+            const remaining = Math.floor((parseInt(tokenExpiration) - new Date().getTime()) / 1000);
+            if (remaining > 0) scheduleTokenRefresh(remaining);
             onLoginSuccess();
         } else {
             loginOverlay.classList.remove('hidden');
@@ -58,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleLogin() { tokenClient && tokenClient.requestAccessToken(); }
     function handleLogout() {
+        if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
         const t = sessionStorage.getItem('access_token');
         if (t) google.accounts.oauth2.revoke(t, () => {});
         sessionStorage.removeItem('access_token');
@@ -66,13 +74,28 @@ document.addEventListener('DOMContentLoaded', () => {
         sessionStorage.removeItem('user_name');
         location.reload();
     }
+    function scheduleTokenRefresh(expiresInSec) {
+        if (refreshTimer) clearTimeout(refreshTimer);
+        // Refresh 5 minutes before expiry (or at 50% of lifetime if <10min)
+        const refreshAt = expiresInSec > 600
+            ? (expiresInSec - 300) * 1000
+            : Math.floor(expiresInSec * 0.5) * 1000;
+        refreshTimer = setTimeout(() => {
+            console.log('Token refresh: requesting new token silently');
+            if (tokenClient) {
+                // prompt: '' means silent refresh (no popup if user already consented)
+                tokenClient.requestAccessToken({ prompt: '' });
+            }
+        }, refreshAt);
+    }
     async function onLoginSuccess() {
+        isLoggingOut = false;  // Reset 401 cascade guard
         loginOverlay.classList.add('hidden');
         authBtn.textContent = 'ログアウト';
         authBtn.onclick = handleLogout;
         settingsBtn.style.display = '';
 
-        // Fetch user info and display in header
+        // Verify token is valid by fetching user info first
         try {
             const me = await fetchAPI('/api/me');
             if (me && me.email) {
@@ -83,7 +106,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     userDisplay.classList.remove('hidden');
                 }
             }
-        } catch (e) { /* ignore — will still work without display */ }
+        } catch (e) {
+            // If /api/me fails with 401, the fetchAPI handler already showed login overlay
+            // Don't proceed with other API calls
+            console.warn('Auth check failed, not loading data');
+            return;
+        }
 
         // Load API key: prefer server-side setting, fall back to localStorage
         try {
@@ -216,13 +244,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const res = await fetch(url, opts);
         if (res.status === 401) {
-            // Token expired or invalid — show login overlay
-            showToast('セッションが切れました。再ログインしてください', true);
-            sessionStorage.removeItem('access_token');
-            sessionStorage.removeItem('token_expiration');
-            loginOverlay.classList.remove('hidden');
-            authBtn.textContent = 'Googleでログイン';
-            authBtn.onclick = handleLogin;
+            // Token expired or invalid — show login overlay (only once)
+            if (!isLoggingOut) {
+                isLoggingOut = true;
+                showToast('セッションが切れました。再ログインしてください', true);
+                accessToken = null;
+                sessionStorage.removeItem('access_token');
+                sessionStorage.removeItem('token_expiration');
+                loginOverlay.classList.remove('hidden');
+                authBtn.textContent = 'Googleでログイン';
+                authBtn.onclick = handleLogin;
+                const userDisplay = document.getElementById('user-display');
+                if (userDisplay) userDisplay.classList.add('hidden');
+            }
             throw new Error('Unauthorized');
         }
         return res.json();

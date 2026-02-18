@@ -21,6 +21,11 @@ import ai_service
 
 load_dotenv()
 
+# In-memory cache: access_token -> {user: dict, expires: timestamp}
+# Avoids calling Google UserInfo API on every request
+_token_cache = {}
+_TOKEN_CACHE_TTL = 300  # 5 minutes
+
 app = Flask(__name__, static_folder='.', static_url_path='/static')
 CORS(app)
 
@@ -34,6 +39,7 @@ db.init_db()
 def get_current_user():
     """Extract user from Authorization header (Bearer token).
     Calls Google UserInfo API to get email, then finds/creates user in DB.
+    Uses in-memory cache to avoid calling Google API on every request.
     Caches result in flask.g for the duration of the request."""
     if hasattr(g, 'user') and g.user:
         return g.user
@@ -46,14 +52,25 @@ def get_current_user():
     if not access_token:
         return None
 
+    import time
+    now = time.time()
+
+    # Check in-memory token cache first
+    cached = _token_cache.get(access_token)
+    if cached and cached['expires'] > now:
+        g.user = cached['user']
+        return cached['user']
+
     try:
-        # Call Google UserInfo API
+        # Call Google UserInfo API (only when not cached)
         resp = http_requests.get(
             'https://www.googleapis.com/oauth2/v3/userinfo',
             headers={'Authorization': f'Bearer {access_token}'},
-            timeout=5
+            timeout=10
         )
         if resp.status_code != 200:
+            # Clean expired cache entry if exists
+            _token_cache.pop(access_token, None)
             return None
 
         info = resp.json()
@@ -66,6 +83,19 @@ def get_current_user():
             name=info.get('name', ''),
             picture=info.get('picture', '')
         )
+
+        # Cache the result
+        _token_cache[access_token] = {
+            'user': user,
+            'expires': now + _TOKEN_CACHE_TTL
+        }
+
+        # Clean old entries periodically (keep cache small)
+        if len(_token_cache) > 100:
+            expired = [k for k, v in _token_cache.items() if v['expires'] < now]
+            for k in expired:
+                del _token_cache[k]
+
         g.user = user
         return user
     except Exception as e:
@@ -352,7 +382,7 @@ def api_me():
     user = get_current_user()
     if not user:
         return jsonify({"error": "Not authenticated"}), 401
-    return jsonify({"user": user})
+    return jsonify(user)
 
 
 # ============================
