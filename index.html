@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=9">
+    <link rel="stylesheet" href="style.css?v=21">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -119,7 +119,6 @@
                                         <th class="je-th" style="min-width:120px;">借方 <button type="button" class="help-btn" data-help="借方の勘定科目を入力します。費用の発生（旅費交通費、消耗品費など）や資産の増加（普通預金など）を入力します。">?</button></th>
                                         <th class="je-th" style="min-width:120px;">貸方 <button type="button" class="help-btn" data-help="貸方の勘定科目を入力します。クレジット払い→未払金、銀行振込→普通預金、現金払い→現金が一般的です。">?</button></th>
                                         <th class="je-th" style="width:110px;">税込金額 <button type="button" class="help-btn" data-help="消費税を含んだ合計金額を入力します。レシートの支払総額です。">?</button></th>
-                                        <th class="je-th" style="width:100px;">税抜金額 <button type="button" class="help-btn" data-help="税込金額と税率から自動計算されます。手入力は不要です。">?</button></th>
                                         <th class="je-th" style="min-width:110px;">取引先 <button type="button" class="help-btn" data-help="取引先の名称を入力します。過去に登録した取引先が候補として表示されます。AI判定の精度が上がります。">?</button></th>
                                         <th class="je-th" style="min-width:140px;">元帳摘要 <button type="button" class="help-btn" data-help="取引の内容を簡潔に入力します。勘定科目残高の摘要欄に記載されます。例：出張交通費、文房具購入など。">?</button></th>
                                         <th class="je-th" style="width:80px;">税率 <button type="button" class="help-btn" data-help="10%＝標準税率（通常の課税取引）、8%＝軽減税率（飲食料品・テイクアウト）、0%＝非課税・不課税の場合。空欄はAI自動判定。">?</button></th>
@@ -141,7 +140,6 @@
                                         <td><input type="text" id="je-debit" list="account-list" placeholder="旅費交通費" autocomplete="off"></td>
                                         <td><input type="text" id="je-credit" list="account-list" placeholder="未払金" autocomplete="off"></td>
                                         <td><input type="number" id="je-amount" placeholder="1,100" min="0" required></td>
-                                        <td><input type="text" id="je-net-amount" readonly tabindex="-1" placeholder="0"></td>
                                         <td><input type="text" id="je-counterparty" list="counterparty-list" placeholder="JR東日本" autocomplete="off"></td>
                                         <td><input type="text" id="je-memo" placeholder="東京→横浜"></td>
                                         <td>
@@ -166,8 +164,8 @@
                             <thead>
                                 <tr>
                                     <th>日付</th><th>課税区分</th><th>借方</th><th>貸方</th>
-                                    <th class="text-right">税込金額</th><th class="text-right">税抜金額</th>
-                                    <th>取引先</th><th>元帳摘要</th><th>税率</th>
+                                    <th class="text-right">税込金額</th>
+                                    <th>取引先</th><th>摘要</th><th>税率</th><th>証憑</th><th></th>
                                 </tr>
                             </thead>
                             <tbody id="recent-tbody"></tbody>
@@ -181,7 +179,7 @@
             <!-- View 2: 証憑読み取り -->
             <section id="view-scan" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">証憑読み取り</h2>
+                    <h2 class="card-title">証憑読み取り <button type="button" class="help-btn" data-help="レシートや請求書の画像・PDFをアップロードすると、AIが内容を読み取って自動で仕訳を作成します。">?</button></h2>
                     <div id="drop-zone" class="drop-zone">
                         <div class="drop-zone-icon">
                             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -189,6 +187,13 @@
                         <p>レシート・請求書・CSV明細をドラッグ&ドロップ</p>
                         <p class="drop-zone-hint">または<span class="link">ファイルを選択</span></p>
                         <input type="file" id="file-input" multiple accept="image/*,.csv,.pdf" hidden>
+                    </div>
+                    <div class="drive-inbox-area">
+                        <button id="drive-pick-btn" class="btn-drive-pick" type="button">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3H10l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
+                            Googleドライブから読み取り
+                        </button>
+                        <p class="drive-inbox-hint">Googleドライブの <strong>Accounting_Evidence/inbox</strong> フォルダにレシートや請求書を入れておくと、ボタン1つで一括読み取りできます。読み取り後、仕訳を確認・登録すると、ファイルは自動的に <strong>processed</strong> フォルダへ移動します。</p>
                     </div>
                 </div>
                 <div id="scan-status" class="status-area hidden">
@@ -219,19 +224,73 @@
             <!-- View 3: 仕訳帳 -->
             <section id="view-journal-book" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">仕訳帳</h2>
+                    <h2 class="card-title">仕訳帳 <button type="button" class="help-btn" data-help="すべての仕訳（取引記録）を日付順に一覧表示する帳簿です。期間ナビや詳細検索で絞り込みできます。">?</button></h2>
                     <div class="filter-bar" id="jb-filters">
-                        <input type="date" id="jb-start" class="filter-input">
-                        <span class="filter-sep">〜</span>
-                        <input type="date" id="jb-end" class="filter-input">
-                        <select id="jb-account" class="filter-input"><option value="">全科目</option></select>
-                        <input type="text" id="jb-search" class="filter-input" placeholder="取引先・摘要で検索">
-                        <button id="jb-apply" class="btn btn-sm btn-primary">検索</button>
+                        <div class="period-nav" id="jb-period-nav">
+                            <select class="period-select" id="jb-period-mode">
+                                <option value="ytd">年初〜当日</option>
+                                <option value="year">年間</option>
+                                <option value="month" selected>当月</option>
+                            </select>
+                            <button class="period-arrow" id="jb-period-prev" title="前へ">◀</button>
+                            <select class="period-select" id="jb-year-select"></select>
+                            <select class="period-select" id="jb-month-select"></select>
+                            <button class="period-arrow" id="jb-period-next" title="次へ">▶</button>
+                        </div>
+                        <button id="jb-advanced-btn" class="btn btn-sm btn-ghost">詳細検索</button>
+                    </div>
+                    <div class="period-range-display" id="jb-period-range"></div>
+                    <div id="jb-active-filters" class="active-filters hidden"></div>
+                    <input type="hidden" id="jb-start">
+                    <input type="hidden" id="jb-end">
+
+                    <!-- 詳細検索モーダル -->
+                    <div id="jb-search-modal" class="search-modal-overlay hidden">
+                        <div class="search-modal">
+                            <div class="search-modal-header">
+                                <h3>詳細検索</h3>
+                                <button id="jb-search-close" class="btn-icon">&times;</button>
+                            </div>
+                            <div class="search-modal-body">
+                                <div class="search-row">
+                                    <label>日付</label>
+                                    <div class="search-range">
+                                        <input type="date" id="adv-start" class="search-input">
+                                        <span>〜</span>
+                                        <input type="date" id="adv-end" class="search-input">
+                                    </div>
+                                </div>
+                                <div class="search-row">
+                                    <label>勘定科目</label>
+                                    <select id="adv-account" class="search-input"><option value="">すべて</option></select>
+                                </div>
+                                <div class="search-row">
+                                    <label>金額</label>
+                                    <div class="search-range">
+                                        <input type="number" id="adv-amount-min" class="search-input" placeholder="下限">
+                                        <span>〜</span>
+                                        <input type="number" id="adv-amount-max" class="search-input" placeholder="上限">
+                                    </div>
+                                </div>
+                                <div class="search-row">
+                                    <label>取引先</label>
+                                    <input type="text" id="adv-counterparty" class="search-input" placeholder="取引先名で検索">
+                                </div>
+                                <div class="search-row">
+                                    <label>摘要</label>
+                                    <input type="text" id="adv-memo" class="search-input" placeholder="摘要内容で検索">
+                                </div>
+                            </div>
+                            <div class="search-modal-footer">
+                                <button id="adv-clear" class="btn btn-sm btn-ghost">条件クリア</button>
+                                <button id="adv-search" class="btn btn-sm btn-primary">検索</button>
+                            </div>
+                        </div>
                     </div>
                     <div class="table-wrap">
                         <table id="jb-table">
                             <thead>
-                                <tr><th>日付</th><th>借方</th><th>貸方</th><th class="text-right">金額</th><th>税区分</th><th>取引先</th><th>摘要</th><th style="width:80px;"></th></tr>
+                                <tr><th>日付</th><th>借方 <button type="button" class="help-btn" data-help="お金を使った目的（費用）や、増えた資産の科目です。例：消耗品費、旅費交通費、普通預金など。">?</button></th><th>貸方 <button type="button" class="help-btn" data-help="支払い方法や、減った資産の科目です。例：未払金（クレカ）、普通預金（振込）、現金など。">?</button></th><th class="text-right">金額</th><th>税区分 <button type="button" class="help-btn" data-help="10%＝標準税率、8%＝軽減税率（食品・テイクアウト）、非課税＝保険料・給与、不課税＝預金移動・事業主貸借。">?</button></th><th>取引先</th><th>摘要 <button type="button" class="help-btn" data-help="取引の内容メモです。何を買ったか、何の支払いかを簡潔に記入します。">?</button></th><th>証憑 <button type="button" class="help-btn" data-help="レシートや請求書など、取引の証拠となる書類です。📎マークから確認できます。">?</button></th><th style="width:80px;"></th></tr>
                             </thead>
                             <tbody id="jb-tbody"></tbody>
                         </table>
@@ -243,12 +302,12 @@
             <!-- View 4: 勘定科目残高 (General Ledger with sub-tabs) -->
             <section id="view-ledger" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">勘定科目残高</h2>
+                    <h2 class="card-title">勘定科目残高 <button type="button" class="help-btn" data-help="各勘定科目ごとの残高一覧です。科目をクリックすると、その科目の明細（いつ・いくら動いたか）を確認できます。">?</button></h2>
                     <div class="ledger-header-row">
                         <div class="sub-tab-nav" id="ledger-sub-nav">
-                            <button class="sub-tab-btn active" data-subtab="bs-assets">貸借対照表（資産）</button>
-                            <button class="sub-tab-btn" data-subtab="bs-liabilities">貸借対照表（負債・純資産）</button>
-                            <button class="sub-tab-btn" data-subtab="profit-loss">損益計算書</button>
+                            <button class="sub-tab-btn active" data-subtab="bs-assets">貸借対照表（資産） <span class="help-btn" data-help="会社が持っている財産の一覧です。現金、預金、売掛金、備品などが含まれます。">?</span></button>
+                            <button class="sub-tab-btn" data-subtab="bs-liabilities">貸借対照表（負債・純資産） <span class="help-btn" data-help="負債＝借金や未払いのお金（借入金、未払金など）。純資産＝元手のお金や利益の蓄積（元入金など）。">?</span></button>
+                            <button class="sub-tab-btn" data-subtab="profit-loss">損益計算書 <span class="help-btn" data-help="一定期間の売上（収益）と経費（費用）をまとめた表です。利益が出ているか赤字かが分かります。">?</span></button>
                         </div>
                         <div class="period-nav" id="ledger-period-nav">
                             <select class="period-select" id="ledger-period-mode">
@@ -318,9 +377,9 @@
             <!-- View 6: 期首残高設定 -->
             <section id="view-opening-balance" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">期首残高設定</h2>
+                    <h2 class="card-title">期首残高設定 <button type="button" class="help-btn" data-help="会計年度の最初（1月1日）時点での各科目の残高です。前年から引き継ぐ残高を入力します。初年度は開業時の残高を入力してください。">?</button></h2>
                     <div class="filter-bar">
-                        <label>会計年度:</label>
+                        <label>会計年度 <button type="button" class="help-btn" data-help="個人事業主の会計年度は1月1日〜12月31日です。確定申告の対象年度を選択します。">?</button>:</label>
                         <select id="ob-fiscal-year" class="filter-input"></select>
                         <button id="ob-load" class="btn btn-sm btn-primary">読み込み</button>
                     </div>
@@ -339,19 +398,45 @@
             <!-- View 7: データのバックアップ -->
             <section id="view-backup" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">データのバックアップ</h2>
-                    <p class="card-desc">データベースの内容をダウンロードして外部に保存できます。</p>
+                    <h2 class="card-title">バックアップ</h2>
+                    <p class="card-desc">データベースの内容を保存できます。</p>
                     <div class="backup-options">
                         <div class="backup-card">
-                            <h3>JSON形式</h3>
-                            <p>全データを読みやすいJSON形式でエクスポートします。</p>
+                            <h3>JSONダウンロード</h3>
+                            <p>全データをJSON形式でPCに保存します。</p>
                             <button id="backup-json" class="btn btn-primary">JSONバックアップ</button>
                         </div>
                         <div class="backup-card">
-                            <h3>SQLiteデータベース</h3>
-                            <p>データベースファイルをそのままダウンロードします。</p>
-                            <button id="backup-sqlite" class="btn btn-ghost">SQLiteダウンロード</button>
+                            <h3>Google Driveに保存</h3>
+                            <p>バックアップをGoogle Driveに自動保存します。</p>
+                            <button id="backup-drive" class="btn btn-primary">Driveにバックアップ</button>
                         </div>
+                    </div>
+                </div>
+                <div class="card" style="margin-top: 16px;">
+                    <h2 class="card-title">データの復元（インポート）</h2>
+                    <p class="card-desc">バックアップファイルからデータを復元します。現在のデータは上書きされます。</p>
+                    <div class="restore-tabs">
+                        <button class="restore-tab active" data-restore="local">PCから復元</button>
+                        <button class="restore-tab" data-restore="drive">Driveから復元</button>
+                    </div>
+                    <!-- Local file restore -->
+                    <div id="restore-local-panel" class="restore-area">
+                        <div class="restore-upload">
+                            <input type="file" id="restore-file" accept=".json" style="display:none;">
+                            <button id="restore-select-btn" class="btn btn-ghost">JSONファイルを選択</button>
+                            <span id="restore-filename" class="restore-filename">ファイル未選択</span>
+                        </div>
+                        <div id="restore-preview" class="restore-preview" style="display:none;">
+                            <h4>復元プレビュー</h4>
+                            <div id="restore-summary"></div>
+                        </div>
+                        <button id="restore-btn" class="btn btn-danger" style="display:none;">データを復元する</button>
+                    </div>
+                    <!-- Drive restore -->
+                    <div id="restore-drive-panel" class="restore-area" style="display:none;">
+                        <button id="drive-list-btn" class="btn btn-ghost">Driveのバックアップ一覧を取得</button>
+                        <div id="drive-file-list" style="margin-top:0.75rem;"></div>
                     </div>
                 </div>
             </section>
@@ -359,11 +444,11 @@
             <!-- View 8: 勘定科目 -->
             <section id="view-accounts" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">勘定科目管理</h2>
+                    <h2 class="card-title">勘定科目管理 <button type="button" class="help-btn" data-help="仕訳で使う科目の一覧です。足りない科目があれば追加、不要な科目は削除できます。">?</button></h2>
                     <div class="acc-add-form">
                         <input type="text" id="acc-code" class="filter-input" placeholder="コード (例: 640)" style="width:80px;">
                         <input type="text" id="acc-name" class="filter-input" placeholder="科目名" style="width:140px;">
-                        <select id="acc-type" class="filter-input">
+                        <select id="acc-type" class="filter-input" title="区分">
                             <option value="資産">資産</option>
                             <option value="負債">負債</option>
                             <option value="純資産">純資産</option>
@@ -382,7 +467,7 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>コード</th><th>科目名</th><th>区分</th><th>税区分</th><th style="width:60px;"></th>
+                                    <th>コード</th><th>科目名</th><th>区分 <button type="button" class="help-btn" data-help="資産＝持っている財産（現金・預金）、負債＝支払い義務（借入金・未払金）、純資産＝元手（元入金）、収益＝売上や収入、費用＝経費や支出。">?</button></th><th>税区分</th><th style="width:60px;"></th>
                                 </tr>
                             </thead>
                             <tbody id="acc-tbody"></tbody>
@@ -394,26 +479,40 @@
             <!-- View 9: アウトプット -->
             <section id="view-output" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">アウトプット</h2>
+                    <h2 class="card-title">アウトプット <button type="button" class="help-btn" data-help="会計データをCSVファイルやPDF形式で出力できます。確定申告や税理士への提出に使えます。">?</button></h2>
+                    <div class="output-period-bar">
+                        <label>期間:</label>
+                        <input type="date" id="out-start" class="filter-input">
+                        <span class="filter-sep">〜</span>
+                        <input type="date" id="out-end" class="filter-input">
+                    </div>
                     <div class="output-options">
                         <div class="output-section">
-                            <h3>仕訳帳エクスポート</h3>
-                            <div class="filter-bar">
-                                <label>期間:</label>
-                                <input type="date" id="out-start" class="filter-input">
-                                <span class="filter-sep">〜</span>
-                                <input type="date" id="out-end" class="filter-input">
-                            </div>
+                            <h3>仕訳帳 <button type="button" class="help-btn" data-help="すべての取引を日付順に記録した帳簿です。いつ・何に・いくら使ったかの全記録が確認できます。">?</button></h3>
                             <div class="output-btns">
-                                <button id="out-journal-csv" class="btn btn-primary btn-sm">CSV ダウンロード</button>
+                                <button id="out-journal-csv" class="btn btn-primary btn-sm">CSV</button>
                                 <button id="out-journal-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
                             </div>
                         </div>
                         <div class="output-section">
-                            <h3>残高試算表エクスポート</h3>
+                            <h3>総勘定元帳 <button type="button" class="help-btn" data-help="各勘定科目ごとに取引をまとめた帳簿です。特定の科目（例：旅費交通費）だけの動きを確認できます。">?</button></h3>
                             <div class="output-btns">
-                                <button id="out-tb-csv" class="btn btn-primary btn-sm">CSV ダウンロード</button>
-                                <button id="out-tb-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
+                                <button id="out-ledger-csv" class="btn btn-primary btn-sm">CSV</button>
+                                <button id="out-ledger-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
+                            </div>
+                        </div>
+                        <div class="output-section">
+                            <h3>貸借対照表（B/S） <button type="button" class="help-btn" data-help="ある時点での財産と借金の状況を表す書類です。左側に資産（持っているもの）、右側に負債（借りているもの）と純資産が並びます。">?</button></h3>
+                            <div class="output-btns">
+                                <button id="out-bs-csv" class="btn btn-primary btn-sm">CSV</button>
+                                <button id="out-bs-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
+                            </div>
+                        </div>
+                        <div class="output-section">
+                            <h3>損益計算書（P/L） <button type="button" class="help-btn" data-help="一定期間の売上と経費をまとめて、利益（もうけ）がいくらかを計算する書類です。確定申告で必ず必要です。">?</button></h3>
+                            <div class="output-btns">
+                                <button id="out-pl-csv" class="btn btn-primary btn-sm">CSV</button>
+                                <button id="out-pl-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
                             </div>
                         </div>
                     </div>
@@ -440,12 +539,64 @@
                 <input type="password" id="api-key-input" placeholder="AIzaSy...">
                 <small>Google AI StudioからAPIキーを取得: <a href="https://aistudio.google.com/app/apikey" target="_blank">取得する</a></small>
             </div>
-            <div class="form-group">
-                <label>Spreadsheet ID (エクスポート用)</label>
-                <input type="text" id="spreadsheet-id-input" placeholder="1twlGw...">
-                <small>エクスポート先のスプレッドシートID <a href="https://sheets.new" target="_blank">新規作成</a></small>
-            </div>
             <button id="save-settings-btn" class="btn btn-primary" style="width:100%;">設定を保存</button>
+        </div>
+    </div>
+
+    <!-- 仕訳詳細/編集モーダル -->
+    <div id="je-detail-modal" class="search-modal-overlay hidden">
+        <div class="search-modal je-detail-modal">
+            <div class="search-modal-header">
+                <h3 id="je-detail-title">仕訳詳細</h3>
+                <button id="je-detail-close" class="btn-icon">&times;</button>
+            </div>
+            <div class="search-modal-body">
+                <div class="search-row">
+                    <label>日付</label>
+                    <input type="date" id="jed-date" class="search-input">
+                </div>
+                <div class="search-row">
+                    <label>借方科目</label>
+                    <input type="text" id="jed-debit" list="account-list" class="search-input" autocomplete="off">
+                </div>
+                <div class="search-row">
+                    <label>貸方科目</label>
+                    <input type="text" id="jed-credit" list="account-list" class="search-input" autocomplete="off">
+                </div>
+                <div class="je-detail-row-2col">
+                    <div class="search-row">
+                        <label>税込金額</label>
+                        <input type="number" id="jed-amount" class="search-input" min="0">
+                    </div>
+                    <div class="search-row">
+                        <label>税区分</label>
+                        <select id="jed-tax" class="search-input">
+                            <option value="10%">10%</option>
+                            <option value="8%">8%</option>
+                            <option value="非課税">非課税</option>
+                            <option value="不課税">不課税</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="search-row">
+                    <label>取引先</label>
+                    <input type="text" id="jed-counterparty" list="counterparty-list" class="search-input" autocomplete="off">
+                </div>
+                <div class="search-row">
+                    <label>摘要</label>
+                    <input type="text" id="jed-memo" class="search-input">
+                </div>
+                <div id="jed-evidence-row" class="search-row hidden">
+                    <label>証憑</label>
+                    <a id="jed-evidence-link" href="#" target="_blank" class="evidence-link-detail">📎 証憑を表示</a>
+                </div>
+            </div>
+            <div class="search-modal-footer">
+                <button id="jed-delete" class="btn btn-sm btn-danger">削除</button>
+                <div style="flex:1;"></div>
+                <button id="jed-cancel" class="btn btn-sm btn-ghost">キャンセル</button>
+                <button id="jed-save" class="btn btn-sm btn-primary">保存</button>
+            </div>
         </div>
     </div>
 
@@ -461,10 +612,6 @@
                 </div>
                 <div class="setup-step">
                     <span class="step-num">2</span>
-                    <div><strong>スプレッドシートを作成</strong><a href="https://sheets.new" target="_blank" class="setup-link">作成する →</a></div>
-                </div>
-                <div class="setup-step">
-                    <span class="step-num">3</span>
                     <div><strong>Googleでログインして開始</strong></div>
                 </div>
             </div>
@@ -472,7 +619,36 @@
         </div>
     </div>
 
-    <script src="script.js?v=12"></script>
+    <!-- AI Chat -->
+    <button id="ai-chat-fab" class="ai-chat-fab" title="AIに相談">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+            <line x1="10" y1="22" x2="14" y2="22"/>
+            <line x1="9" y1="9" x2="9.01" y2="9"/>
+            <line x1="15" y1="9" x2="15.01" y2="9"/>
+            <path d="M9.5 13a3.5 3.5 0 0 0 5 0"/>
+        </svg>
+    </button>
+    <div id="ai-chat-panel" class="ai-chat-panel hidden">
+        <div class="ai-chat-header">
+            <div class="ai-chat-header-left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/><path d="M9.5 13a3.5 3.5 0 0 0 5 0"/></svg>
+                <span>AI会計アシスタント</span>
+            </div>
+            <button id="ai-chat-close" class="ai-chat-close">&times;</button>
+        </div>
+        <div id="ai-chat-messages" class="ai-chat-messages">
+            <div class="ai-msg ai-msg-bot">こんにちは！Hinakira会計のAIアシスタントです。会計処理やツールの使い方について、お気軽にご質問ください。</div>
+        </div>
+        <div class="ai-chat-input-area">
+            <input type="text" id="ai-chat-input" class="ai-chat-input" placeholder="質問を入力..." autocomplete="off">
+            <button id="ai-chat-send" class="ai-chat-send" title="送信">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <script src="script.js?v=29"></script>
 </body>
 
 </html>

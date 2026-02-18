@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+import google.generativeai as genai
 
 import db
 import models
@@ -55,6 +56,222 @@ def upload_to_drive(file_bytes, filename, mime_type, access_token):
     except Exception as e:
         print(f"Drive Upload Error: {e}")
         return ""
+
+
+def get_or_create_folder(service, folder_name, parent_id=None):
+    """Get or create a Google Drive folder. Returns folder_id."""
+    q = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
+    if parent_id:
+        q += f" and '{parent_id}' in parents"
+    results = service.files().list(q=q, spaces='drive', fields='files(id)').execute()
+    items = results.get('files', [])
+    if items:
+        return items[0]['id']
+    meta = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
+    if parent_id:
+        meta['parents'] = [parent_id]
+    f = service.files().create(body=meta, fields='id').execute()
+    return f.get('id')
+
+
+def get_all_folder_ids(service, folder_name, parent_ids=None):
+    """Get ALL folder IDs matching name under any of the parent_ids. Handles duplicate folders."""
+    all_ids = []
+    if parent_ids:
+        for pid in parent_ids:
+            q = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false and '{pid}' in parents"
+            results = service.files().list(q=q, spaces='drive', fields='files(id)').execute()
+            all_ids.extend([f['id'] for f in results.get('files', [])])
+    else:
+        q = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
+        results = service.files().list(q=q, spaces='drive', fields='files(id)').execute()
+        all_ids = [f['id'] for f in results.get('files', [])]
+    return all_ids
+
+
+def upload_to_drive_processed(file_bytes, filename, mime_type, access_token):
+    """Upload evidence file to Accounting_Evidence/processed/ on Google Drive."""
+    try:
+        if not access_token:
+            return ""
+        creds = Credentials(token=access_token)
+        service = build('drive', 'v3', credentials=creds)
+        root_id = get_or_create_folder(service, "Accounting_Evidence")
+        processed_id = get_or_create_folder(service, "processed", root_id)
+
+        file_metadata = {'name': filename, 'parents': [processed_id]}
+        media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
+        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        return file.get('webViewLink')
+    except Exception as e:
+        print(f"Drive Upload Error: {e}")
+        return ""
+
+
+# ============================
+#  Drive Inbox API
+# ============================
+@app.route('/api/drive/init', methods=['POST'])
+def api_drive_init():
+    """Initialize Drive folder structure on login."""
+    data = request.json or {}
+    access_token = data.get('access_token', '')
+    if not access_token:
+        return jsonify({"error": "Googleログインが必要です"}), 401
+
+    try:
+        creds = Credentials(token=access_token)
+        service = build('drive', 'v3', credentials=creds)
+        root_id = get_or_create_folder(service, "Accounting_Evidence")
+        get_or_create_folder(service, "inbox", root_id)
+        get_or_create_folder(service, "processed", root_id)
+        return jsonify({"status": "success", "folder_id": root_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/drive/inbox', methods=['POST'])
+def api_drive_inbox_list():
+    """List unprocessed files in Accounting_Evidence/inbox/."""
+    data = request.json or {}
+    access_token = data.get('access_token', '')
+    if not access_token:
+        return jsonify({"error": "Googleログインが必要です"}), 401
+
+    import sys
+    try:
+        creds = Credentials(token=access_token)
+        service = build('drive', 'v3', credentials=creds)
+
+        # Find ALL Accounting_Evidence folders (handle duplicates)
+        root_ids = get_all_folder_ids(service, "Accounting_Evidence")
+        if not root_ids:
+            return jsonify({"files": [], "inbox_folder_ids": []})
+
+        # Find ALL inbox folders under any root
+        inbox_ids = get_all_folder_ids(service, "inbox", root_ids)
+        if not inbox_ids:
+            return jsonify({"files": [], "inbox_folder_ids": []})
+
+        print(f"[Drive Inbox] root_ids={root_ids}, inbox_ids={inbox_ids}", file=sys.stderr, flush=True)
+
+        # List files from ALL inbox folders
+        all_files = []
+        for iid in inbox_ids:
+            q = f"'{iid}' in parents and trashed=false"
+            results = service.files().list(
+                q=q,
+                spaces='drive',
+                fields='files(id, name, mimeType, createdTime, size)',
+                orderBy='createdTime desc',
+                pageSize=50
+            ).execute()
+            all_files.extend(results.get('files', []))
+
+        print(f"[Drive Inbox] Found {len(all_files)} files: {[f['name'] for f in all_files]}", file=sys.stderr, flush=True)
+        return jsonify({"files": all_files, "inbox_folder_ids": inbox_ids})
+    except Exception as e:
+        print(f"[Drive Inbox] Error: {e}", file=sys.stderr, flush=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/drive/inbox/analyze', methods=['POST'])
+def api_drive_inbox_analyze():
+    """Download files from Drive inbox and analyze with AI."""
+    data = request.json or {}
+    access_token = data.get('access_token', '')
+    gemini_api_key = data.get('gemini_api_key', '')
+    file_ids = data.get('file_ids', [])
+
+    if not access_token:
+        return jsonify({"error": "Googleログインが必要です"}), 401
+    if not gemini_api_key:
+        return jsonify({"error": "Gemini APIキーが設定されていません"}), 401
+    if not file_ids:
+        return jsonify({"error": "ファイルが指定されていません"}), 400
+
+    ai_service.configure_gemini(gemini_api_key)
+    history = models.get_accounting_history()
+    existing = models.get_existing_entry_keys()
+
+    try:
+        creds = Credentials(token=access_token)
+        service = build('drive', 'v3', credentials=creds)
+        from googleapiclient.http import MediaIoBaseDownload
+
+        results = []
+        for fid in file_ids:
+            # Get file metadata
+            meta = service.files().get(fileId=fid, fields='name, mimeType, webViewLink').execute()
+            fname = meta.get('name', '')
+            mime = meta.get('mimeType', '')
+            web_link = meta.get('webViewLink', '')
+
+            # Download content
+            req = service.files().get_media(fileId=fid)
+            buf = io.BytesIO()
+            dl = MediaIoBaseDownload(buf, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+            buf.seek(0)
+            fbytes = buf.read()
+
+            # AI analysis
+            if fname.lower().endswith('.csv'):
+                res = ai_service.analyze_csv(fbytes, history)
+            else:
+                res = ai_service.analyze_document(fbytes, mime, history)
+
+            for item in res:
+                item['evidence_url'] = web_link
+                item['drive_file_id'] = fid
+                key = f"{item.get('date')}_{str(item.get('amount'))}_{item.get('counterparty')}"
+                item['is_duplicate'] = key in existing
+            results.extend(res)
+
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/drive/inbox/move', methods=['POST'])
+def api_drive_inbox_move():
+    """Move files from inbox to processed after journal registration."""
+    data = request.json or {}
+    access_token = data.get('access_token', '')
+    file_ids = data.get('file_ids', [])
+
+    if not access_token:
+        return jsonify({"error": "Googleログインが必要です"}), 401
+    if not file_ids:
+        return jsonify({"status": "success", "moved": 0})
+
+    try:
+        creds = Credentials(token=access_token)
+        service = build('drive', 'v3', credentials=creds)
+        root_id = get_or_create_folder(service, "Accounting_Evidence")
+        processed_id = get_or_create_folder(service, "processed", root_id)
+
+        moved = 0
+        for fid in file_ids:
+            try:
+                # Get current parents to know which inbox folder to remove
+                f = service.files().get(fileId=fid, fields='parents').execute()
+                current_parents = ','.join(f.get('parents', []))
+                service.files().update(
+                    fileId=fid,
+                    addParents=processed_id,
+                    removeParents=current_parents,
+                    fields='id'
+                ).execute()
+                moved += 1
+            except Exception:
+                pass
+
+        return jsonify({"status": "success", "moved": moved})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ============================
@@ -106,6 +323,8 @@ def api_journal_list():
         'account_id': request.args.get('account_id'),
         'counterparty': request.args.get('counterparty'),
         'memo': request.args.get('memo'),
+        'amount_min': request.args.get('amount_min'),
+        'amount_max': request.args.get('amount_max'),
         'page': request.args.get('page', 1),
         'per_page': request.args.get('per_page', 20),
     }
@@ -214,7 +433,7 @@ def api_analyze():
         # Upload evidence to Drive (optional)
         ev_url = ""
         if access_token:
-            ev_url = upload_to_drive(fbytes, file.filename, ftype, access_token)
+            ev_url = upload_to_drive_processed(fbytes, file.filename, ftype, access_token)
 
         # AI Analysis
         if fname.endswith('.csv'):
@@ -249,6 +468,79 @@ def api_predict():
         return jsonify(predictions)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ============================
+#  AI Chat API
+# ============================
+@app.route('/api/chat', methods=['POST'])
+def api_chat():
+    """AI chat endpoint for accounting consultation."""
+    data = request.json or {}
+    message = data.get('message', '').strip()
+    history = data.get('history', [])
+    gemini_api_key = data.get('gemini_api_key', '')
+
+    if not message:
+        return jsonify({"error": "メッセージが空です"}), 400
+    if not gemini_api_key:
+        return jsonify({"error": "Gemini APIキーが設定されていません"}), 401
+
+    ai_service.configure_gemini(gemini_api_key)
+
+    # Get app context for the AI
+    account_list = models.get_accounts()
+    account_names = ", ".join([f"{a['name']}({a['code']})" for a in account_list[:40]])
+
+    system_prompt = f"""あなたは「Hinakira会計」の会計AIアシスタントです。
+以下の役割で、ユーザーの質問に日本語で丁寧に答えてください。
+
+【あなたの役割】
+- 日本の個人事業主向け会計・税務の相談対応
+- このツール（Hinakira会計）の使い方の案内
+- 仕訳の考え方、勘定科目の選び方のアドバイス
+- 消費税区分（課税仕入、課税売上、非課税、不課税）の判定支援
+- 確定申告・青色申告に関する一般的な質問への回答
+
+【このツールの機能】
+- 仕訳入力: 手動入力 + AI自動判定（摘要を入力→借方・貸方・税区分をAI推定）
+- 証憑読み取り: レシート・請求書をアップロード → AIが仕訳を自動作成、Google Driveに証憑保存
+- 仕訳帳: 登録済み仕訳の一覧・検索・編集・削除
+- 勘定科目残高: 貸借対照表(B/S)・損益計算書(P/L)を月次/年次で表示
+- 取引先管理: 取引先の登録・管理
+- 勘定科目管理: 科目の追加・削除
+- 期首残高: 期首残高の設定
+- バックアップ: JSON/Google Drive バックアップ・復元
+- アウトプット: 仕訳帳・総勘定元帳・B/S・P/LのCSV/PDF出力
+
+【登録されている勘定科目】
+{account_names}
+
+【注意事項】
+- 税理士資格に基づく個別の税務判断や申告代行はできません
+- 一般的な会計知識に基づいたアドバイスを提供してください
+- 回答は簡潔にわかりやすくしてください
+"""
+
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+
+        # Build conversation history
+        contents = []
+        contents.append({"role": "user", "parts": [{"text": system_prompt + "\n\n（ここからユーザーとの会話開始）"}]})
+        contents.append({"role": "model", "parts": [{"text": "はい、Hinakira会計のAIアシスタントです。会計処理やツールの使い方について、お気軽にご質問ください。"}]})
+
+        for h in history[-10:]:  # Last 10 messages
+            role = "user" if h.get('role') == 'user' else "model"
+            contents.append({"role": role, "parts": [{"text": h.get('text', '')}]})
+
+        contents.append({"role": "user", "parts": [{"text": message}]})
+
+        response = model.generate_content(contents)
+        return jsonify({"reply": response.text})
+    except Exception as e:
+        print(f"Chat Error: {e}")
+        return jsonify({"error": f"AI応答に失敗しました: {str(e)}"}), 500
 
 
 # ============================
@@ -372,14 +664,142 @@ def api_ledger(account_id):
 # ============================
 @app.route('/api/backup/download', methods=['GET'])
 def api_backup_download():
-    """Download database backup."""
-    format_type = request.args.get('format', 'json')
-    if format_type == 'sqlite':
-        return send_from_directory('data', 'accounting.db', as_attachment=True,
-                                   download_name='accounting_backup.db')
-    else:
-        data = models.get_full_backup()
-        return jsonify(data)
+    """Download database backup as JSON."""
+    data = models.get_full_backup()
+    return jsonify(data)
+
+
+@app.route('/api/backup/drive', methods=['POST'])
+def api_backup_to_drive():
+    """Upload JSON backup to Google Drive."""
+    data = request.json or {}
+    access_token = data.get('access_token', '')
+    if not access_token:
+        return jsonify({"error": "Googleログインが必要です"}), 401
+
+    try:
+        backup_data = models.get_full_backup()
+        backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2)
+        backup_bytes = backup_json.encode('utf-8')
+
+        import datetime
+        filename = f"hinakira_backup_{datetime.date.today().isoformat()}.json"
+        link = upload_to_drive(backup_bytes, filename, 'application/json', access_token)
+        if link:
+            return jsonify({"status": "success", "link": link, "filename": filename})
+        else:
+            return jsonify({"error": "Driveへのアップロードに失敗しました"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/backup/drive/list', methods=['POST'])
+def api_backup_drive_list():
+    """List backup files from Google Drive."""
+    data = request.json or {}
+    access_token = data.get('access_token', '')
+    if not access_token:
+        return jsonify({"error": "Googleログインが必要です"}), 401
+
+    try:
+        creds = Credentials(token=access_token)
+        service = build('drive', 'v3', credentials=creds)
+
+        # Find backup folder
+        folder_name = "Accounting_Evidence"
+        results = service.files().list(
+            q=f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false",
+            spaces='drive'
+        ).execute()
+        items = results.get('files', [])
+        if not items:
+            return jsonify({"files": []})
+
+        folder_id = items[0]['id']
+
+        # List backup JSON files
+        results = service.files().list(
+            q=f"'{folder_id}' in parents and name contains 'hinakira_backup' and mimeType='application/json' and trashed=false",
+            spaces='drive',
+            fields='files(id, name, createdTime, size)',
+            orderBy='createdTime desc',
+            pageSize=20
+        ).execute()
+        files = results.get('files', [])
+        return jsonify({"files": files})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/backup/drive/restore', methods=['POST'])
+def api_backup_drive_restore():
+    """Download and restore a backup file from Google Drive."""
+    data = request.json or {}
+    access_token = data.get('access_token', '')
+    file_id = data.get('file_id', '')
+    if not access_token:
+        return jsonify({"error": "Googleログインが必要です"}), 401
+    if not file_id:
+        return jsonify({"error": "ファイルが指定されていません"}), 400
+
+    try:
+        creds = Credentials(token=access_token)
+        service = build('drive', 'v3', credentials=creds)
+
+        # Download file content
+        from googleapiclient.http import MediaIoBaseDownload
+        request_dl = service.files().get_media(fileId=file_id)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request_dl)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+        buffer.seek(0)
+        content = buffer.read().decode('utf-8')
+        backup_data = json.loads(content)
+
+        # Validate
+        expected_tables = ['accounts_master', 'journal_entries', 'opening_balances', 'counterparties', 'settings']
+        if not any(t in backup_data for t in expected_tables):
+            return jsonify({"error": "有効なバックアップデータが見つかりません"}), 400
+
+        summary = models.restore_from_backup(backup_data)
+        return jsonify({"status": "success", "summary": summary})
+    except Exception as e:
+        return jsonify({"error": f"復元に失敗しました: {str(e)}"}), 500
+
+
+@app.route('/api/backup/restore', methods=['POST'])
+def api_backup_restore():
+    """Restore database from JSON backup file."""
+    if 'file' not in request.files:
+        return jsonify({"error": "ファイルが選択されていません"}), 400
+
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({"error": "ファイルが選択されていません"}), 400
+
+    if not file.filename.lower().endswith('.json'):
+        return jsonify({"error": "JSONファイルのみ対応しています"}), 400
+
+    try:
+        content = file.read().decode('utf-8')
+        data = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        return jsonify({"error": f"JSONファイルの読み込みに失敗しました: {str(e)}"}), 400
+
+    # Validate structure
+    expected_tables = ['accounts_master', 'journal_entries', 'opening_balances', 'counterparties', 'settings']
+    has_any = any(t in data for t in expected_tables)
+    if not has_any:
+        return jsonify({"error": "有効なバックアップデータが見つかりません"}), 400
+
+    try:
+        summary = models.restore_from_backup(data)
+        return jsonify({"status": "success", "summary": summary})
+    except Exception as e:
+        return jsonify({"error": f"復元に失敗しました: {str(e)}"}), 500
 
 
 # ============================
@@ -413,6 +833,26 @@ def api_export_trial_balance():
     end_date = request.args.get('end_date')
     balances = models.get_trial_balance(start_date, end_date)
     return jsonify({"balances": balances})
+
+
+@app.route('/api/export/ledger', methods=['GET'])
+def api_export_ledger():
+    """Export general ledger for all accounts."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    account_list = models.get_accounts()
+    result = []
+    for acct in account_list:
+        ledger = models.get_ledger_entries(acct['id'], start_date, end_date)
+        if ledger.get('entries'):
+            result.append({
+                'account_code': acct['code'],
+                'account_name': acct['name'],
+                'account_type': acct['account_type'],
+                'opening_balance': ledger.get('opening_balance', 0),
+                'entries': ledger.get('entries', [])
+            })
+    return jsonify({"accounts": result})
 
 
 # ============================

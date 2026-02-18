@@ -119,20 +119,35 @@ def create_journal_entry(entry: dict) -> int:
         if not debit_id or not credit_id:
             raise ValueError(f"Invalid account: debit={entry.get('debit_account', entry.get('debit_account_id'))}, credit={entry.get('credit_account', entry.get('credit_account_id'))}")
 
+        # --- Prior year check: redirect to Jan 1 of current year ---
+        entry_date = entry.get('entry_date', entry.get('date', ''))
+        memo = entry.get('memo', '')
+        import datetime
+        current_year = datetime.date.today().year
+        if entry_date:
+            try:
+                parsed_date = datetime.date.fromisoformat(entry_date)
+                if parsed_date.year < current_year:
+                    original_date = entry_date
+                    entry_date = f"{current_year}-01-01"
+                    memo = f"[実際日付:{original_date}] {memo}".strip()
+            except (ValueError, TypeError):
+                pass
+
         cursor = conn.execute(
             """INSERT INTO journal_entries
             (entry_date, debit_account_id, credit_account_id, amount, tax_classification, tax_amount,
              counterparty, memo, evidence_url, source)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                entry.get('entry_date', entry.get('date', '')),
+                entry_date,
                 debit_id,
                 credit_id,
                 amount,
                 tax_class,
                 tax_amount,
                 entry.get('counterparty', ''),
-                entry.get('memo', ''),
+                memo,
                 entry.get('evidence_url', ''),
                 entry.get('source', 'manual'),
             )
@@ -188,6 +203,12 @@ def get_journal_entries(filters: dict = None) -> dict:
         if filters.get('memo'):
             conditions.append("je.memo LIKE ?")
             params.append(f"%{filters['memo']}%")
+        if filters.get('amount_min'):
+            conditions.append("je.amount >= ?")
+            params.append(int(filters['amount_min']))
+        if filters.get('amount_max'):
+            conditions.append("je.amount <= ?")
+            params.append(int(filters['amount_max']))
 
         where = " AND ".join(conditions)
 
@@ -235,7 +256,7 @@ def get_recent_entries(limit=5) -> list:
         rows = conn.execute("""
         SELECT
             je.id, je.entry_date, je.amount, je.tax_classification, je.tax_amount,
-            je.counterparty, je.memo, je.source,
+            je.counterparty, je.memo, je.evidence_url, je.source,
             da.name AS debit_account, ca.name AS credit_account
         FROM journal_entries je
         JOIN accounts_master da ON je.debit_account_id = da.id
@@ -575,6 +596,11 @@ def get_ledger_entries(account_id: int, start_date=None, end_date=None) -> dict:
             r['debit_amount'] = debit_amount
             r['credit_amount'] = credit_amount
             r['balance'] = balance
+            # Compute counter account (the "other side" of the entry)
+            if r['debit_account_id'] == account_id:
+                r['counter_account'] = r['credit_account']
+            else:
+                r['counter_account'] = r['debit_account']
             entries.append(r)
 
         return {"account": account, "opening_balance": opening, "entries": entries}
@@ -595,6 +621,65 @@ def get_full_backup() -> dict:
             except Exception:
                 result[table] = []
         return result
+    finally:
+        conn.close()
+
+
+def restore_from_backup(data: dict) -> dict:
+    """Restore database from a JSON backup.
+
+    Clears existing data and imports from the backup.
+    Returns a summary of restored record counts.
+    """
+    conn = get_db()
+    try:
+        # Disable foreign keys temporarily for clean restore
+        conn.execute("PRAGMA foreign_keys=OFF")
+
+        summary = {}
+
+        # Order matters: accounts first (referenced by journal_entries & opening_balances)
+        table_order = ['accounts_master', 'journal_entries', 'opening_balances', 'counterparties', 'settings']
+
+        for table in table_order:
+            rows = data.get(table, [])
+            if not isinstance(rows, list):
+                continue
+
+            # Clear existing data
+            conn.execute(f"DELETE FROM {table}")
+
+            if not rows:
+                summary[table] = 0
+                continue
+
+            # Get column names from the first row
+            columns = list(rows[0].keys())
+            placeholders = ', '.join(['?' for _ in columns])
+            col_names = ', '.join(columns)
+
+            inserted = 0
+            for row in rows:
+                try:
+                    values = [row.get(col) for col in columns]
+                    conn.execute(
+                        f"INSERT INTO {table} ({col_names}) VALUES ({placeholders})",
+                        values
+                    )
+                    inserted += 1
+                except Exception as e:
+                    print(f"Restore skip row in {table}: {e}")
+                    continue
+
+            summary[table] = inserted
+
+        # Re-enable foreign keys
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.commit()
+        return summary
+    except Exception as e:
+        conn.rollback()
+        raise e
     finally:
         conn.close()
 

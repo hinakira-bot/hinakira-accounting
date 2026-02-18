@@ -3,12 +3,14 @@ document.addEventListener('DOMContentLoaded', () => {
     //  Section 1: Constants & State
     // ============================================================
     const CLIENT_ID = '353694435064-r6mlbk3mm2mflhl2mot2n94dpuactscc.apps.googleusercontent.com';
-    const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
+    const SCOPES = 'https://www.googleapis.com/auth/drive';
     let tokenClient;
     let accessToken = sessionStorage.getItem('access_token');
     let tokenExpiration = sessionStorage.getItem('token_expiration');
     let accounts = [];            // Account master cache
     let scanResults = [];         // Scan tab working data
+    const thisYear = new Date().getFullYear();
+    const thisMonth = new Date().getMonth() + 1;
 
     // ============================================================
     //  Section 2: DOM References
@@ -72,6 +74,10 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAccounts();
         loadRecentEntries();
         loadCounterparties();
+        // Initialize Drive folder structure (inbox/processed)
+        if (accessToken) {
+            fetchAPI('/api/drive/init', 'POST', { access_token: accessToken }).catch(() => {});
+        }
     }
 
     authBtn.onclick = handleLogin;
@@ -85,11 +91,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('.modal-backdrop')?.addEventListener('click', () => settingsModal.classList.add('hidden'));
     saveSettingsBtn.onclick = () => {
         const key = document.getElementById('api-key-input').value.trim();
-        const sid = document.getElementById('spreadsheet-id-input').value.trim();
         if (key) {
             localStorage.setItem('gemini_api_key', key);
-            if (sid) localStorage.setItem('spreadsheet_id', sid);
-            fetchAPI('/api/settings', 'POST', { gemini_api_key: key, spreadsheet_id: sid });
+            fetchAPI('/api/settings', 'POST', { gemini_api_key: key });
             settingsModal.classList.add('hidden');
             showToast('設定を保存しました');
         } else {
@@ -98,7 +102,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     function openSettings() {
         document.getElementById('api-key-input').value = localStorage.getItem('gemini_api_key') || '';
-        document.getElementById('spreadsheet-id-input').value = localStorage.getItem('spreadsheet_id') || '';
         settingsModal.classList.remove('hidden');
     }
 
@@ -169,12 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initial route from hash
-    const initHash = location.hash.replace('#', '');
-    if (initHash && initHash !== 'menu') {
-        showView(initHash);
-    }
-    // If no hash, menu is already visible (active class in HTML)
+    // NOTE: Initial route from hash moved to end of script (after all declarations)
 
     // ============================================================
     //  Section 6: Shared Utilities
@@ -301,7 +299,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const jeDebit = document.getElementById('je-debit');
     const jeCredit = document.getElementById('je-credit');
     const jeAmount = document.getElementById('je-amount');
-    const jeNetAmount = document.getElementById('je-net-amount');
     const jeCounterparty = document.getElementById('je-counterparty');
     const jeMemo = document.getElementById('je-memo');
     const jeTaxRate = document.getElementById('je-tax-rate');
@@ -309,19 +306,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Default date to today
     jeDate.value = todayStr();
-
-    // --- Tax-exclusive amount auto-calculation ---
-    function updateNetAmount() {
-        const amt = parseInt(jeAmount.value) || 0;
-        const rate = jeTaxRate.value;
-        if (!amt) { jeNetAmount.value = ''; return; }
-        let tax = 0;
-        if (rate === '10%') tax = Math.floor(amt * 10 / 110);
-        else if (rate === '8%') tax = Math.floor(amt * 8 / 108);
-        jeNetAmount.value = fmt(amt - tax);
-    }
-    jeAmount.addEventListener('input', updateNetAmount);
-    jeTaxRate.addEventListener('change', updateNetAmount);
 
     // --- Tax category ↔ Tax rate linkage ---
     jeTaxCategory.addEventListener('change', () => {
@@ -447,13 +431,20 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // Prior year date check for manual input
+        if (isPriorYear(entry.entry_date)) {
+            const origDate = entry.entry_date;
+            if (!confirm(`⚠️ 前年以前の日付（${origDate}）が入力されています。\n\n当年1月1日（${currentYear}-01-01）の仕訳として登録され、摘要に実際の日付が記録されます。\n\n登録しますか？`)) {
+                return;
+            }
+        }
+
         try {
             const res = await fetchAPI('/api/journal', 'POST', entry);
             if (res.status === 'success') {
                 showToast('仕訳を登録しました');
                 journalForm.reset();
                 jeDate.value = todayStr();
-                jeNetAmount.value = '';
                 loadRecentEntries();
                 loadCounterparties();
             } else {
@@ -466,16 +457,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Recent Entries (below form) ---
     function loadRecentEntries() {
-        fetchAPI('/api/journal/recent?limit=5').then(data => {
+        fetchAPI('/api/journal/recent?limit=10').then(data => {
             const tbody = document.getElementById('recent-tbody');
             if (!tbody) return;
             tbody.innerHTML = (data.entries || []).map(e => {
                 const parsed = parseTaxClassification(e.tax_classification);
-                const amt = parseInt(e.amount) || 0;
-                let tax = 0;
-                if (e.tax_classification === '10%') tax = Math.floor(amt * 10 / 110);
-                else if (e.tax_classification === '8%') tax = Math.floor(amt * 8 / 108);
-                const net = amt - tax;
                 return `
                 <tr>
                     <td>${e.entry_date || ''}</td>
@@ -483,12 +469,32 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td>${e.debit_account || ''}</td>
                     <td>${e.credit_account || ''}</td>
                     <td class="text-right">${fmt(e.amount)}</td>
-                    <td class="text-right">${fmt(net)}</td>
                     <td>${e.counterparty || ''}</td>
                     <td>${e.memo || ''}</td>
                     <td>${parsed.taxRate || ''}</td>
+                    <td>${e.evidence_url ? `<a href="${e.evidence_url}" target="_blank" class="evidence-link" title="証憑を表示">📎</a>` : ''}</td>
+                    <td><button class="btn-row-delete" data-id="${e.id}" title="削除">✕</button></td>
                 </tr>`;
             }).join('');
+
+            // Attach delete handlers
+            tbody.querySelectorAll('.btn-row-delete').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.dataset.id;
+                    if (!confirm('この仕訳を削除しますか？')) return;
+                    try {
+                        const res = await fetchAPI(`/api/journal/${id}`, 'DELETE');
+                        if (res.status === 'success') {
+                            showToast('仕訳を削除しました');
+                            loadRecentEntries();
+                        } else {
+                            showToast('削除に失敗しました', true);
+                        }
+                    } catch (err) {
+                        showToast('削除に失敗しました', true);
+                    }
+                });
+            });
         });
     }
 
@@ -555,13 +561,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    const currentYear = new Date().getFullYear();
+
+    function isPriorYear(dateStr) {
+        if (!dateStr) return false;
+        const y = parseInt(dateStr.substring(0, 4));
+        return y < currentYear;
+    }
+
     function renderScanResults() {
         let hasDup = false;
+        let hasPriorYear = false;
         scanTbody.innerHTML = scanResults.map((item, i) => {
             if (item.is_duplicate) hasDup = true;
+            const priorYear = isPriorYear(item.date);
+            if (priorYear) hasPriorYear = true;
             return `
-            <tr class="${item.is_duplicate ? 'row-duplicate' : ''}">
-                <td><input type="date" value="${item.date || ''}" data-i="${i}" data-k="date" class="scan-input"></td>
+            <tr class="${item.is_duplicate ? 'row-duplicate' : ''} ${priorYear ? 'row-prior-year' : ''}">
+                <td><input type="date" value="${item.date || ''}" data-i="${i}" data-k="date" class="scan-input ${priorYear ? 'input-prior-year' : ''}"></td>
                 <td><input type="text" value="${item.debit_account || ''}" list="account-list" data-i="${i}" data-k="debit_account" class="scan-input"></td>
                 <td><input type="text" value="${item.credit_account || ''}" list="account-list" data-i="${i}" data-k="credit_account" class="scan-input"></td>
                 <td><input type="number" value="${item.amount || 0}" data-i="${i}" data-k="amount" class="scan-input" style="width:100px;"></td>
@@ -580,6 +597,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
 
         scanDupAlert.classList.toggle('hidden', !hasDup);
+
+        // Prior year alert
+        let priorAlert = document.getElementById('scan-prior-year-alert');
+        if (!priorAlert) {
+            priorAlert = document.createElement('div');
+            priorAlert.id = 'scan-prior-year-alert';
+            priorAlert.className = 'alert alert-warning';
+            priorAlert.innerHTML = '⚠️ 前年以前の日付が含まれています。登録時に当年1月1日の仕訳として登録され、摘要に実際の日付が記録されます。';
+            scanDupAlert.parentNode.insertBefore(priorAlert, scanDupAlert.nextSibling);
+        }
+        priorAlert.classList.toggle('hidden', !hasPriorYear);
 
         scanTbody.querySelectorAll('.scan-input').forEach(el => {
             el.addEventListener('change', (e) => {
@@ -617,6 +645,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetchAPI('/api/journal', 'POST', { entries });
             if (res.status === 'success') {
                 showToast(`${res.created}件の仕訳を登録しました`);
+                // Move inbox files to processed (if any)
+                if (driveFileIdsInScan.length && accessToken) {
+                    fetchAPI('/api/drive/inbox/move', 'POST', {
+                        access_token: accessToken,
+                        file_ids: driveFileIdsInScan
+                    }).then(() => {
+                        driveFileIdsInScan = [];
+                    }).catch(() => {});
+                }
                 scanResults = [];
                 scanTbody.innerHTML = '';
                 scanResultsCard.classList.add('hidden');
@@ -632,36 +669,260 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Google Drive inbox scan
+    const drivePickBtn = document.getElementById('drive-pick-btn');
+    let driveFileIdsInScan = []; // track inbox file IDs for move after save
+
+    drivePickBtn.addEventListener('click', async () => {
+        if (!accessToken) {
+            showToast('Googleにログインしてください', true);
+            return;
+        }
+        const apiKey = localStorage.getItem('gemini_api_key');
+        if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
+
+        // Step 1: List inbox files
+        scanStatus.classList.remove('hidden');
+        scanStatusText.textContent = 'ドライブのinboxフォルダを確認中...';
+
+        try {
+            const listData = await fetchAPI('/api/drive/inbox', 'POST', { access_token: accessToken });
+            if (listData.error) throw new Error(listData.error);
+
+            const files = listData.files || [];
+            if (files.length === 0) {
+                scanStatus.classList.add('hidden');
+                showToast('inboxに未処理のファイルはありません');
+                return;
+            }
+
+            // Step 2: Analyze all inbox files
+            scanStatusText.textContent = `inboxの${files.length}件をAIで読み取り中...`;
+            const fileIds = files.map(f => f.id);
+
+            const results = await fetchAPI('/api/drive/inbox/analyze', 'POST', {
+                access_token: accessToken,
+                gemini_api_key: apiKey,
+                file_ids: fileIds
+            });
+            if (results.error) throw new Error(results.error);
+
+            // Track file IDs for moving after save
+            driveFileIdsInScan = [...new Set(results.map(r => r.drive_file_id).filter(Boolean))];
+
+            scanResults = scanResults.length ? [...scanResults, ...results] : results;
+            renderScanResults();
+            scanStatus.classList.add('hidden');
+            scanResultsCard.classList.remove('hidden');
+            showToast(`${files.length}件の証憑を読み取りました。内容を確認して登録してください`);
+        } catch (err) {
+            scanStatus.classList.add('hidden');
+            showToast('読み取りエラー: ' + err.message, true);
+        }
+    });
+
     // ============================================================
     //  Section 9: View 3 — 仕訳帳 (Journal Book)
     // ============================================================
     const jbStartInput = document.getElementById('jb-start');
     const jbEndInput = document.getElementById('jb-end');
-    const jbAccountSelect = document.getElementById('jb-account');
-    const jbSearchInput = document.getElementById('jb-search');
-    const jbApplyBtn = document.getElementById('jb-apply');
     const jbTbody = document.getElementById('jb-tbody');
     const jbPagination = document.getElementById('jb-pagination');
 
+    // Period nav for journal book (same pattern as ledger)
+    const jbPeriodMode = document.getElementById('jb-period-mode');
+    const jbYearSelect = document.getElementById('jb-year-select');
+    const jbMonthSelect = document.getElementById('jb-month-select');
+    const jbPeriodPrev = document.getElementById('jb-period-prev');
+    const jbPeriodNext = document.getElementById('jb-period-next');
+    const jbPeriodRange = document.getElementById('jb-period-range');
+
+    // Advanced search modal
+    const jbAdvBtn = document.getElementById('jb-advanced-btn');
+    const jbSearchModal = document.getElementById('jb-search-modal');
+    const jbSearchClose = document.getElementById('jb-search-close');
+    const advStartInput = document.getElementById('adv-start');
+    const advEndInput = document.getElementById('adv-end');
+    const advAccountSelect = document.getElementById('adv-account');
+    const advAmountMin = document.getElementById('adv-amount-min');
+    const advAmountMax = document.getElementById('adv-amount-max');
+    const advCounterparty = document.getElementById('adv-counterparty');
+    const advMemo = document.getElementById('adv-memo');
+    const advClearBtn = document.getElementById('adv-clear');
+    const advSearchBtn = document.getElementById('adv-search');
+    const jbActiveFilters = document.getElementById('jb-active-filters');
+
+    let jbAdvancedFilters = {}; // stores current advanced filter state
+
     let jbPage = 1;
     const JB_PER_PAGE = 20;
+    let jbCurrentPeriodMode = 'month';
 
-    const fy = fiscalYearDates();
-    jbStartInput.value = fy.start;
-    jbEndInput.value = fy.end;
+    // Populate year/month selects
+    for (let y = thisYear - 3; y <= thisYear + 1; y++) {
+        const opt = document.createElement('option');
+        opt.value = y; opt.textContent = y + '年';
+        if (y === thisYear) opt.selected = true;
+        jbYearSelect.appendChild(opt);
+    }
+    for (let m = 1; m <= 12; m++) {
+        const opt = document.createElement('option');
+        opt.value = m; opt.textContent = m + '月';
+        if (m === thisMonth) opt.selected = true;
+        jbMonthSelect.appendChild(opt);
+    }
 
-    jbApplyBtn.addEventListener('click', () => { jbPage = 1; loadJournalBook(); });
+    function applyJBPeriod() {
+        const y = parseInt(jbYearSelect.value) || thisYear;
+        const m = parseInt(jbMonthSelect.value) || thisMonth;
+        const now = new Date();
+        switch (jbCurrentPeriodMode) {
+            case 'ytd':
+                jbStartInput.value = `${y}-01-01`;
+                jbEndInput.value = (y === now.getFullYear()) ? todayStr() : `${y}-12-31`;
+                break;
+            case 'year':
+                jbStartInput.value = `${y}-01-01`;
+                jbEndInput.value = `${y}-12-31`;
+                break;
+            case 'month': {
+                const mStr = String(m).padStart(2, '0');
+                const lastDay = new Date(y, m, 0).getDate();
+                jbStartInput.value = `${y}-${mStr}-01`;
+                jbEndInput.value = `${y}-${mStr}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+        }
+        jbPeriodRange.textContent = `${jbStartInput.value} 〜 ${jbEndInput.value}`;
+        jbMonthSelect.style.display = (jbCurrentPeriodMode === 'month') ? '' : 'none';
+        jbPeriodPrev.style.display = (jbCurrentPeriodMode === 'month') ? '' : 'none';
+        jbPeriodNext.style.display = (jbCurrentPeriodMode === 'month') ? '' : 'none';
+    }
+
+    function moveJBPeriod(delta) {
+        if (jbCurrentPeriodMode !== 'month') {
+            jbYearSelect.value = (parseInt(jbYearSelect.value) || thisYear) + delta;
+        } else {
+            let m = (parseInt(jbMonthSelect.value) || thisMonth) + delta;
+            let y = parseInt(jbYearSelect.value) || thisYear;
+            if (m < 1) { m = 12; y--; }
+            if (m > 12) { m = 1; y++; }
+            jbYearSelect.value = y;
+            jbMonthSelect.value = m;
+        }
+        applyJBPeriod();
+        jbPage = 1;
+        loadJournalBook();
+    }
+
+    applyJBPeriod();
+
+    jbPeriodMode.addEventListener('change', () => {
+        jbCurrentPeriodMode = jbPeriodMode.value;
+        applyJBPeriod();
+        jbPage = 1;
+        loadJournalBook();
+    });
+    jbYearSelect.addEventListener('change', () => { applyJBPeriod(); jbPage = 1; loadJournalBook(); });
+    jbMonthSelect.addEventListener('change', () => { applyJBPeriod(); jbPage = 1; loadJournalBook(); });
+    jbPeriodPrev.addEventListener('click', () => moveJBPeriod(-1));
+    jbPeriodNext.addEventListener('click', () => moveJBPeriod(1));
+
+    // --- Advanced Search Modal ---
+    jbAdvBtn.addEventListener('click', () => {
+        // Pre-fill modal with current period
+        advStartInput.value = jbStartInput.value;
+        advEndInput.value = jbEndInput.value;
+        // Populate account options from master
+        advAccountSelect.innerHTML = '<option value="">すべて</option>';
+        accounts.forEach(a => {
+            advAccountSelect.innerHTML += `<option value="${a.id}">${a.code} ${a.name}</option>`;
+        });
+        // Restore last advanced filters
+        if (jbAdvancedFilters.account_id) advAccountSelect.value = jbAdvancedFilters.account_id;
+        if (jbAdvancedFilters.amount_min) advAmountMin.value = jbAdvancedFilters.amount_min;
+        if (jbAdvancedFilters.amount_max) advAmountMax.value = jbAdvancedFilters.amount_max;
+        if (jbAdvancedFilters.counterparty) advCounterparty.value = jbAdvancedFilters.counterparty;
+        if (jbAdvancedFilters.memo) advMemo.value = jbAdvancedFilters.memo;
+        jbSearchModal.classList.remove('hidden');
+    });
+
+    jbSearchClose.addEventListener('click', () => jbSearchModal.classList.add('hidden'));
+    jbSearchModal.addEventListener('click', (e) => {
+        if (e.target === jbSearchModal) jbSearchModal.classList.add('hidden');
+    });
+
+    advClearBtn.addEventListener('click', () => {
+        advStartInput.value = jbStartInput.value;
+        advEndInput.value = jbEndInput.value;
+        advAccountSelect.value = '';
+        advAmountMin.value = '';
+        advAmountMax.value = '';
+        advCounterparty.value = '';
+        advMemo.value = '';
+    });
+
+    advSearchBtn.addEventListener('click', () => {
+        // Override period with modal dates
+        if (advStartInput.value) jbStartInput.value = advStartInput.value;
+        if (advEndInput.value) jbEndInput.value = advEndInput.value;
+        jbPeriodRange.textContent = `${jbStartInput.value} 〜 ${jbEndInput.value}`;
+
+        jbAdvancedFilters = {};
+        if (advAccountSelect.value) jbAdvancedFilters.account_id = advAccountSelect.value;
+        if (advAmountMin.value) jbAdvancedFilters.amount_min = advAmountMin.value;
+        if (advAmountMax.value) jbAdvancedFilters.amount_max = advAmountMax.value;
+        if (advCounterparty.value.trim()) jbAdvancedFilters.counterparty = advCounterparty.value.trim();
+        if (advMemo.value.trim()) jbAdvancedFilters.memo = advMemo.value.trim();
+
+        updateActiveFiltersDisplay();
+        jbSearchModal.classList.add('hidden');
+        jbPage = 1;
+        loadJournalBook();
+    });
+
+    function updateActiveFiltersDisplay() {
+        const tags = [];
+        if (jbAdvancedFilters.account_id) {
+            const acc = accounts.find(a => String(a.id) === String(jbAdvancedFilters.account_id));
+            tags.push(`科目: ${acc ? acc.name : jbAdvancedFilters.account_id}`);
+        }
+        if (jbAdvancedFilters.amount_min || jbAdvancedFilters.amount_max) {
+            const min = jbAdvancedFilters.amount_min || '0';
+            const max = jbAdvancedFilters.amount_max || '∞';
+            tags.push(`金額: ${Number(min).toLocaleString()}〜${max === '∞' ? '∞' : Number(max).toLocaleString()}`);
+        }
+        if (jbAdvancedFilters.counterparty) tags.push(`取引先: ${jbAdvancedFilters.counterparty}`);
+        if (jbAdvancedFilters.memo) tags.push(`摘要: ${jbAdvancedFilters.memo}`);
+
+        if (tags.length) {
+            jbActiveFilters.innerHTML = tags.map(t => `<span class="filter-tag">${t}</span>`).join('') +
+                `<button class="btn-link filter-clear-all" id="jb-clear-all-filters">条件クリア</button>`;
+            jbActiveFilters.classList.remove('hidden');
+            jbAdvBtn.textContent = `詳細検索 (${tags.length})`;
+            document.getElementById('jb-clear-all-filters').addEventListener('click', () => {
+                jbAdvancedFilters = {};
+                updateActiveFiltersDisplay();
+                applyJBPeriod();
+                jbPage = 1;
+                loadJournalBook();
+            });
+        } else {
+            jbActiveFilters.classList.add('hidden');
+            jbActiveFilters.innerHTML = '';
+            jbAdvBtn.textContent = '詳細検索';
+        }
+    }
 
     async function loadJournalBook() {
         const params = new URLSearchParams();
         if (jbStartInput.value) params.set('start_date', jbStartInput.value);
         if (jbEndInput.value) params.set('end_date', jbEndInput.value);
-        if (jbAccountSelect.value) params.set('account_id', jbAccountSelect.value);
-        const search = jbSearchInput.value.trim();
-        if (search) {
-            params.set('counterparty', search);
-            params.set('memo', search);
-        }
+        if (jbAdvancedFilters.account_id) params.set('account_id', jbAdvancedFilters.account_id);
+        if (jbAdvancedFilters.counterparty) params.set('counterparty', jbAdvancedFilters.counterparty);
+        if (jbAdvancedFilters.memo) params.set('memo', jbAdvancedFilters.memo);
+        if (jbAdvancedFilters.amount_min) params.set('amount_min', jbAdvancedFilters.amount_min);
+        if (jbAdvancedFilters.amount_max) params.set('amount_max', jbAdvancedFilters.amount_max);
         params.set('page', jbPage);
         params.set('per_page', JB_PER_PAGE);
 
@@ -673,10 +934,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    let jbEntriesCache = [];
+
     function renderJournalBook(data) {
         const entries = data.entries || [];
+        jbEntriesCache = entries;
         jbTbody.innerHTML = entries.map(e => `
-            <tr data-id="${e.id}">
+            <tr data-id="${e.id}" style="cursor:pointer;">
                 <td>${e.entry_date || ''}</td>
                 <td>${e.debit_account || ''}</td>
                 <td>${e.credit_account || ''}</td>
@@ -684,6 +948,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${e.tax_classification || ''}</td>
                 <td>${e.counterparty || ''}</td>
                 <td>${e.memo || ''}</td>
+                <td>${e.evidence_url ? `<a href="${e.evidence_url}" target="_blank" class="evidence-link" title="証憑を表示">📎</a>` : ''}</td>
                 <td>
                     <button class="btn-icon jb-edit" data-id="${e.id}" title="編集">✎</button>
                     <button class="btn-icon jb-delete" data-id="${e.id}" title="削除">×</button>
@@ -692,7 +957,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `).join('');
 
         if (!entries.length) {
-            jbTbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:2rem;">仕訳データがありません</td></tr>';
+            jbTbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:2rem;">仕訳データがありません</td></tr>';
         }
 
         const total = data.total || 0;
@@ -727,8 +992,18 @@ document.addEventListener('DOMContentLoaded', () => {
         jbTbody.querySelectorAll('.jb-edit').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const id = e.target.dataset.id;
-                const row = e.target.closest('tr');
-                startInlineEdit(row, id);
+                const entry = jbEntriesCache.find(en => String(en.id) === String(id));
+                if (entry) openJEDetailModal(entry, () => { loadJournalBook(); loadRecentEntries(); });
+            });
+        });
+
+        // Double-click to open detail modal
+        jbTbody.querySelectorAll('tr[data-id]').forEach(row => {
+            row.addEventListener('dblclick', (e) => {
+                if (e.target.closest('a') || e.target.closest('button')) return;
+                const id = row.dataset.id;
+                const entry = jbEntriesCache.find(en => String(en.id) === String(id));
+                if (entry) openJEDetailModal(entry, () => { loadJournalBook(); loadRecentEntries(); });
             });
         });
 
@@ -822,8 +1097,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentPeriodMode = 'month';  // 'ytd' | 'year' | 'month'
 
     // --- Year & Month selector population ---
-    const thisYear = new Date().getFullYear();
-    const thisMonth = new Date().getMonth() + 1;
     for (let y = thisYear - 3; y <= thisYear + 1; y++) {
         const opt = document.createElement('option');
         opt.value = y;
@@ -942,7 +1215,10 @@ document.addEventListener('DOMContentLoaded', () => {
     ledgerDetailBack.addEventListener('click', hideLedgerDetail);
 
     // --- Account Drill-down ---
+    let currentDrillAccountId = null;
+
     async function showAccountDetail(accountId) {
+        currentDrillAccountId = accountId;
         const params = new URLSearchParams();
         if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
         if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
@@ -960,15 +1236,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const openBal = data.opening_balance || 0;
 
             let html = `<p style="margin-bottom:0.75rem;font-size:0.8125rem;color:var(--text-secondary);">期首残高: <strong>${fmt(openBal)}</strong></p>`;
-            html += `<div class="table-wrap"><table class="tb-table">
+            html += `<div class="table-wrap"><table class="tb-table ledger-detail-table">
                 <thead><tr>
                     <th>日付</th><th>相手科目</th><th>摘要</th><th>取引先</th>
                     <th class="text-right">借方</th><th class="text-right">貸方</th>
-                    <th class="text-right">差引残高</th>
+                    <th class="text-right">差引残高</th><th style="width:70px;">操作</th>
                 </tr></thead><tbody>`;
 
             entries.forEach(e => {
-                html += `<tr>
+                html += `<tr data-entry-id="${e.id}" style="cursor:pointer;">
                     <td>${e.entry_date || ''}</td>
                     <td>${e.counter_account || ''}</td>
                     <td>${e.memo || ''}</td>
@@ -976,18 +1252,111 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="text-right">${e.debit_amount ? fmt(e.debit_amount) : ''}</td>
                     <td class="text-right">${e.credit_amount ? fmt(e.credit_amount) : ''}</td>
                     <td class="text-right" style="font-weight:600;">${fmt(e.balance)}</td>
+                    <td class="action-cell">
+                        <button class="btn-icon ledger-edit" data-id="${e.id}" title="編集">✎</button>
+                        <button class="btn-icon ledger-delete" data-id="${e.id}" title="削除">×</button>
+                    </td>
                 </tr>`;
             });
 
             if (!entries.length) {
-                html += '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--text-dim);">該当する仕訳がありません</td></tr>';
+                html += '<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--text-dim);">該当する仕訳がありません</td></tr>';
             }
 
             html += '</tbody></table></div>';
             ledgerDetailContent.innerHTML = html;
+
+            // Attach delete handlers
+            ledgerDetailContent.querySelectorAll('.ledger-delete').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const id = btn.dataset.id;
+                    if (!confirm('この仕訳を削除しますか？')) return;
+                    try {
+                        const res = await fetchAPI(`/api/journal/${id}`, 'DELETE');
+                        if (res.status === 'success') {
+                            showToast('削除しました');
+                            showAccountDetail(accountId);
+                        } else {
+                            showToast('削除に失敗しました', true);
+                        }
+                    } catch (err) {
+                        showToast('通信エラー', true);
+                    }
+                });
+            });
+
+            // Attach edit handlers (open modal)
+            ledgerDetailContent.querySelectorAll('.ledger-edit').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const id = btn.dataset.id;
+                    const entry = entries.find(e => String(e.id) === String(id));
+                    if (entry) openJEDetailModal(entry, () => showAccountDetail(accountId));
+                });
+            });
+
+            // Double-click to open detail modal
+            ledgerDetailContent.querySelectorAll('tr[data-entry-id]').forEach(row => {
+                row.addEventListener('dblclick', (e) => {
+                    if (e.target.closest('a') || e.target.closest('button')) return;
+                    const id = row.dataset.entryId;
+                    const entry = entries.find(en => String(en.id) === String(id));
+                    if (entry) openJEDetailModal(entry, () => showAccountDetail(accountId));
+                });
+            });
         } catch (err) {
             showToast('元帳明細の読み込みに失敗しました', true);
         }
+    }
+
+    function startLedgerInlineEdit(row, entry, accountId) {
+        const taxClass = entry.tax_classification || '10%';
+        row.innerHTML = `
+            <td><input type="date" value="${entry.entry_date || ''}" class="edit-input" data-k="entry_date"></td>
+            <td colspan="2">
+                <div style="display:flex;gap:4px;">
+                    <input type="text" value="${entry.debit_account || ''}" list="account-list" class="edit-input" data-k="debit_account" placeholder="借方" style="flex:1;">
+                    <input type="text" value="${entry.credit_account || ''}" list="account-list" class="edit-input" data-k="credit_account" placeholder="貸方" style="flex:1;">
+                </div>
+            </td>
+            <td><input type="text" value="${entry.counterparty || ''}" class="edit-input" data-k="counterparty"></td>
+            <td><input type="number" value="${entry.amount || 0}" class="edit-input" data-k="amount" style="width:100px;"></td>
+            <td>
+                <select class="edit-input" data-k="tax_classification">
+                    <option value="10%" ${taxClass === '10%' ? 'selected' : ''}>10%</option>
+                    <option value="8%" ${taxClass === '8%' ? 'selected' : ''}>8%</option>
+                    <option value="非課税" ${taxClass === '非課税' ? 'selected' : ''}>非課税</option>
+                    <option value="不課税" ${taxClass === '不課税' ? 'selected' : ''}>不課税</option>
+                </select>
+            </td>
+            <td><input type="text" value="${entry.memo || ''}" class="edit-input" data-k="memo"></td>
+            <td class="action-cell">
+                <button class="btn-icon edit-save" title="保存">✓</button>
+                <button class="btn-icon edit-cancel" title="キャンセル">✕</button>
+            </td>
+        `;
+
+        row.querySelector('.edit-save').addEventListener('click', async () => {
+            const updated = {};
+            row.querySelectorAll('.edit-input').forEach(inp => {
+                updated[inp.dataset.k] = inp.value;
+            });
+            updated.amount = parseInt(updated.amount) || 0;
+            try {
+                const res = await fetchAPI(`/api/journal/${entry.id}`, 'PUT', updated);
+                if (res.status === 'success') {
+                    showToast('更新しました');
+                    showAccountDetail(accountId);
+                } else {
+                    showToast('更新に失敗しました', true);
+                }
+            } catch (err) {
+                showToast('通信エラー', true);
+            }
+        });
+
+        row.querySelector('.edit-cancel').addEventListener('click', () => {
+            showAccountDetail(accountId);
+        });
     }
 
     // Helper: build a clickable account table with drill-down
@@ -1376,8 +1745,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const obSaveBtn = document.getElementById('ob-save');
     const obTbody = document.getElementById('ob-tbody');
 
-    // Populate fiscal year options
-    const currentYear = new Date().getFullYear();
+    // Populate fiscal year options (currentYear already defined in Section 7)
     for (let y = currentYear - 2; y <= currentYear + 1; y++) {
         const opt = document.createElement('option');
         opt.value = y;
@@ -1459,18 +1827,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    //  Section 13: View 7 — データのバックアップ (Backup)
+    //  Section 13: View 7 — データのバックアップ (Backup & Restore)
     // ============================================================
     const backupJsonBtn = document.getElementById('backup-json');
-    const backupSqliteBtn = document.getElementById('backup-sqlite');
+    const backupDriveBtn = document.getElementById('backup-drive');
 
+    // --- JSON Download ---
     backupJsonBtn.addEventListener('click', async () => {
         try {
             backupJsonBtn.disabled = true;
             backupJsonBtn.textContent = 'ダウンロード中...';
             const res = await fetch('/api/backup/download?format=json');
             const blob = await res.blob();
-            downloadBlob(blob, `accounting_backup_${todayStr()}.json`, 'application/json');
+            downloadBlob(blob, `hinakira_backup_${todayStr()}.json`, 'application/json');
             showToast('JSONバックアップをダウンロードしました');
         } catch (err) {
             showToast('バックアップに失敗しました', true);
@@ -1480,19 +1849,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    backupSqliteBtn.addEventListener('click', async () => {
+    // --- Google Drive Backup ---
+    backupDriveBtn.addEventListener('click', async () => {
+        if (!accessToken) {
+            showToast('Googleにログインしてください', true);
+            return;
+        }
         try {
-            backupSqliteBtn.disabled = true;
-            backupSqliteBtn.textContent = 'ダウンロード中...';
-            const res = await fetch('/api/backup/download?format=sqlite');
-            const blob = await res.blob();
-            downloadBlob(blob, `accounting_backup_${todayStr()}.db`, 'application/x-sqlite3');
-            showToast('SQLiteバックアップをダウンロードしました');
+            backupDriveBtn.disabled = true;
+            backupDriveBtn.textContent = 'アップロード中...';
+            const res = await fetch('/api/backup/drive', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: accessToken })
+            });
+            const result = await res.json();
+            if (result.status === 'success') {
+                showToast(`Driveに保存しました: ${result.filename}`);
+            } else {
+                showToast(result.error || 'Drive保存に失敗しました', true);
+            }
         } catch (err) {
-            showToast('バックアップに失敗しました', true);
+            showToast('Drive保存に失敗しました', true);
         } finally {
-            backupSqliteBtn.disabled = false;
-            backupSqliteBtn.textContent = 'SQLiteダウンロード';
+            backupDriveBtn.disabled = false;
+            backupDriveBtn.textContent = 'Driveにバックアップ';
         }
     });
 
@@ -1507,148 +1888,718 @@ document.addEventListener('DOMContentLoaded', () => {
         URL.revokeObjectURL(url);
     }
 
+    // --- Restore Tab Switching ---
+    const restoreTabs = document.querySelectorAll('.restore-tab');
+    const restoreLocalPanel = document.getElementById('restore-local-panel');
+    const restoreDrivePanel = document.getElementById('restore-drive-panel');
+
+    restoreTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            restoreTabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            const mode = tab.dataset.restore;
+            restoreLocalPanel.style.display = mode === 'local' ? '' : 'none';
+            restoreDrivePanel.style.display = mode === 'drive' ? '' : 'none';
+        });
+    });
+
+    // --- Local File Restore ---
+    const restoreFileInput = document.getElementById('restore-file');
+    const restoreSelectBtn = document.getElementById('restore-select-btn');
+    const restoreFilename = document.getElementById('restore-filename');
+    const restorePreview = document.getElementById('restore-preview');
+    const restoreSummary = document.getElementById('restore-summary');
+    const restoreBtn = document.getElementById('restore-btn');
+    let restoreData = null;
+
+    const TABLE_LABELS = {
+        accounts_master: '勘定科目',
+        journal_entries: '仕訳',
+        opening_balances: '期首残高',
+        counterparties: '取引先',
+        settings: '設定'
+    };
+
+    restoreSelectBtn.addEventListener('click', () => restoreFileInput.click());
+
+    restoreFileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        restoreFilename.textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                restoreData = JSON.parse(ev.target.result);
+                let html = '<table>';
+                let hasData = false;
+                for (const [key, label] of Object.entries(TABLE_LABELS)) {
+                    const arr = restoreData[key];
+                    if (Array.isArray(arr)) {
+                        html += `<tr><td>${label}</td><td>${arr.length}件</td></tr>`;
+                        hasData = true;
+                    }
+                }
+                html += '</table>';
+                if (!hasData) {
+                    restoreSummary.innerHTML = '<p style="color:#dc2626;">有効なバックアップデータが見つかりません。</p>';
+                    restoreBtn.style.display = 'none';
+                } else {
+                    restoreSummary.innerHTML = html;
+                    restoreBtn.style.display = '';
+                }
+                restorePreview.style.display = '';
+            } catch (err) {
+                restoreData = null;
+                restoreSummary.innerHTML = '<p style="color:#dc2626;">JSONファイルの解析に失敗しました。</p>';
+                restorePreview.style.display = '';
+                restoreBtn.style.display = 'none';
+            }
+        };
+        reader.readAsText(file);
+    });
+
+    restoreBtn.addEventListener('click', async () => {
+        if (!restoreData) return;
+        const ok = confirm('⚠️ 現在のデータはすべて上書きされます。\n本当に復元しますか？');
+        if (!ok) return;
+        try {
+            restoreBtn.disabled = true;
+            restoreBtn.textContent = '復元中...';
+            const formData = new FormData();
+            const blob = new Blob([JSON.stringify(restoreData)], { type: 'application/json' });
+            formData.append('file', blob, 'restore.json');
+            const res = await fetch('/api/backup/restore', { method: 'POST', body: formData });
+            const result = await res.json();
+            if (result.status === 'success') {
+                showRestoreSuccess(result.summary);
+                restoreData = null;
+                restoreFileInput.value = '';
+                restoreFilename.textContent = 'ファイル未選択';
+                restorePreview.style.display = 'none';
+                restoreBtn.style.display = 'none';
+            } else {
+                showToast(result.error || '復元に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('復元に失敗しました', true);
+        } finally {
+            restoreBtn.disabled = false;
+            restoreBtn.textContent = 'データを復元する';
+        }
+    });
+
+    // --- Drive Restore ---
+    const driveListBtn = document.getElementById('drive-list-btn');
+    const driveFileList = document.getElementById('drive-file-list');
+
+    driveListBtn.addEventListener('click', async () => {
+        if (!accessToken) {
+            showToast('Googleにログインしてください', true);
+            return;
+        }
+        try {
+            driveListBtn.disabled = true;
+            driveListBtn.textContent = '取得中...';
+            const res = await fetch('/api/backup/drive/list', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: accessToken })
+            });
+            const result = await res.json();
+            if (result.error) {
+                showToast(result.error, true);
+                driveFileList.innerHTML = '';
+                return;
+            }
+            const files = result.files || [];
+            if (files.length === 0) {
+                driveFileList.innerHTML = '<p style="font-size:0.8125rem; color:#64748b;">Driveにバックアップファイルがありません。</p>';
+                return;
+            }
+            let html = '';
+            for (const f of files) {
+                const d = new Date(f.createdTime);
+                const dateStr = `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+                html += `<div class="drive-file-item">
+                    <div class="drive-file-info">
+                        <div class="name">${f.name}</div>
+                        <div class="date">${dateStr}</div>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="window.__driveRestore('${f.id}','${f.name}')">復元</button>
+                </div>`;
+            }
+            driveFileList.innerHTML = html;
+        } catch (err) {
+            showToast('一覧取得に失敗しました', true);
+        } finally {
+            driveListBtn.disabled = false;
+            driveListBtn.textContent = 'Driveのバックアップ一覧を取得';
+        }
+    });
+
+    // Expose drive restore to onclick handlers
+    window.__driveRestore = async (fileId, fileName) => {
+        const ok = confirm(`⚠️ 「${fileName}」から復元します。\n現在のデータはすべて上書きされます。\n本当に復元しますか？`);
+        if (!ok) return;
+        try {
+            showToast('Driveから復元中...');
+            const res = await fetch('/api/backup/drive/restore', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: accessToken, file_id: fileId })
+            });
+            const result = await res.json();
+            if (result.status === 'success') {
+                showRestoreSuccess(result.summary);
+            } else {
+                showToast(result.error || '復元に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('復元に失敗しました', true);
+        }
+    };
+
+    function showRestoreSuccess(summary) {
+        const s = summary || {};
+        const parts = [];
+        for (const [key, label] of Object.entries(TABLE_LABELS)) {
+            if (s[key] !== undefined) parts.push(`${label}: ${s[key]}件`);
+        }
+        showToast(`復元完了: ${parts.join(', ')}`);
+    }
+
     // ============================================================
     //  Section 14: View 8 — アウトプット (Output / Export)
     // ============================================================
     const outStartInput = document.getElementById('out-start');
     const outEndInput = document.getElementById('out-end');
-    const outJournalCsvBtn = document.getElementById('out-journal-csv');
-    const outJournalPdfBtn = document.getElementById('out-journal-pdf');
-    const outTbCsvBtn = document.getElementById('out-tb-csv');
-    const outTbPdfBtn = document.getElementById('out-tb-pdf');
 
-    outStartInput.value = fy.start;
-    outEndInput.value = fy.end;
+    outStartInput.value = `${thisYear}-01-01`;
+    outEndInput.value = `${thisYear}-12-31`;
 
-    // Journal CSV download
-    outJournalCsvBtn.addEventListener('click', async () => {
-        const params = new URLSearchParams();
-        if (outStartInput.value) params.set('start_date', outStartInput.value);
-        if (outEndInput.value) params.set('end_date', outEndInput.value);
-        params.set('format', 'csv');
+    function outParams() {
+        const p = new URLSearchParams();
+        if (outStartInput.value) p.set('start_date', outStartInput.value);
+        if (outEndInput.value) p.set('end_date', outEndInput.value);
+        return p;
+    }
+    function periodLabel() {
+        return `${outStartInput.value || '?'} ～ ${outEndInput.value || '?'}`;
+    }
 
+    // --- 1. 仕訳帳 ---
+    document.getElementById('out-journal-csv').addEventListener('click', async () => {
+        const p = outParams(); p.set('format', 'csv');
         try {
-            const res = await fetch('/api/export/journal?' + params.toString());
+            const res = await fetch('/api/export/journal?' + p.toString());
             const blob = await res.blob();
-            downloadBlob(blob, `journal_export_${todayStr()}.csv`, 'text/csv');
+            downloadBlob(blob, `仕訳帳_${todayStr()}.csv`, 'text/csv');
             showToast('仕訳帳CSVをダウンロードしました');
-        } catch (err) {
-            showToast('エクスポートに失敗しました', true);
-        }
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
+    });
+    document.getElementById('out-journal-pdf').addEventListener('click', async () => {
+        const p = outParams(); p.set('format', 'json');
+        try {
+            const data = await fetchAPI('/api/export/journal?' + p.toString());
+            openPrintView('仕訳帳', periodLabel(), buildJournalPrintTable(data.entries || []));
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
     });
 
-    // Journal PDF (print view)
-    outJournalPdfBtn.addEventListener('click', async () => {
-        const params = new URLSearchParams();
-        if (outStartInput.value) params.set('start_date', outStartInput.value);
-        if (outEndInput.value) params.set('end_date', outEndInput.value);
-        params.set('format', 'json');
-
+    // --- 2. 総勘定元帳 ---
+    document.getElementById('out-ledger-csv').addEventListener('click', async () => {
         try {
-            const data = await fetchAPI('/api/export/journal?' + params.toString());
-            const entries = data.entries || [];
-            openPrintView('仕訳帳', buildJournalPrintTable(entries));
-        } catch (err) {
-            showToast('エクスポートに失敗しました', true);
-        }
-    });
-
-    // Trial Balance CSV
-    outTbCsvBtn.addEventListener('click', async () => {
-        const params = new URLSearchParams();
-        if (outStartInput.value) params.set('start_date', outStartInput.value);
-        if (outEndInput.value) params.set('end_date', outEndInput.value);
-
-        try {
-            const data = await fetchAPI('/api/export/trial-balance?' + params.toString());
-            const balances = data.balances || [];
-            const csv = buildTrialBalanceCsv(balances);
+            const data = await fetchAPI('/api/export/ledger?' + outParams().toString());
+            const csv = buildLedgerCsv(data.accounts || []);
             const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
-            downloadBlob(blob, `trial_balance_${todayStr()}.csv`, 'text/csv');
-            showToast('残高試算表CSVをダウンロードしました');
-        } catch (err) {
-            showToast('エクスポートに失敗しました', true);
-        }
+            downloadBlob(blob, `総勘定元帳_${todayStr()}.csv`, 'text/csv');
+            showToast('総勘定元帳CSVをダウンロードしました');
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
     });
-
-    // Trial Balance PDF (print view)
-    outTbPdfBtn.addEventListener('click', async () => {
-        const params = new URLSearchParams();
-        if (outStartInput.value) params.set('start_date', outStartInput.value);
-        if (outEndInput.value) params.set('end_date', outEndInput.value);
-
+    document.getElementById('out-ledger-pdf').addEventListener('click', async () => {
         try {
-            const data = await fetchAPI('/api/export/trial-balance?' + params.toString());
-            const balances = data.balances || [];
-            openPrintView('残高試算表', buildTrialBalancePrintTable(balances));
-        } catch (err) {
-            showToast('エクスポートに失敗しました', true);
-        }
+            const data = await fetchAPI('/api/export/ledger?' + outParams().toString());
+            openPrintView('総勘定元帳', periodLabel(), buildLedgerPrintTable(data.accounts || []));
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
     });
 
+    // --- 3. 貸借対照表 (B/S) ---
+    document.getElementById('out-bs-csv').addEventListener('click', async () => {
+        try {
+            const data = await fetchAPI('/api/export/trial-balance?' + outParams().toString());
+            const balances = (data.balances || []).filter(b => b.account_type === '資産' || b.account_type === '負債' || b.account_type === '純資産');
+            const csv = buildBSCsv(balances);
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+            downloadBlob(blob, `貸借対照表_${todayStr()}.csv`, 'text/csv');
+            showToast('貸借対照表CSVをダウンロードしました');
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
+    });
+    document.getElementById('out-bs-pdf').addEventListener('click', async () => {
+        try {
+            const data = await fetchAPI('/api/export/trial-balance?' + outParams().toString());
+            const balances = (data.balances || []).filter(b => b.account_type === '資産' || b.account_type === '負債' || b.account_type === '純資産');
+            openPrintView('貸借対照表', periodLabel(), buildBSPrintTable(balances));
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
+    });
+
+    // --- 4. 損益計算書 (P/L) ---
+    document.getElementById('out-pl-csv').addEventListener('click', async () => {
+        try {
+            const data = await fetchAPI('/api/export/trial-balance?' + outParams().toString());
+            const balances = (data.balances || []).filter(b => b.account_type === '収益' || b.account_type === '費用');
+            const csv = buildPLCsv(balances);
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+            downloadBlob(blob, `損益計算書_${todayStr()}.csv`, 'text/csv');
+            showToast('損益計算書CSVをダウンロードしました');
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
+    });
+    document.getElementById('out-pl-pdf').addEventListener('click', async () => {
+        try {
+            const data = await fetchAPI('/api/export/trial-balance?' + outParams().toString());
+            const balances = (data.balances || []).filter(b => b.account_type === '収益' || b.account_type === '費用');
+            openPrintView('損益計算書', periodLabel(), buildPLPrintTable(balances));
+        } catch (err) { showToast('エクスポートに失敗しました', true); }
+    });
+
+    // ============================================================
+    //  Print / CSV Builders
+    // ============================================================
+    const TBL_STYLE = 'border-collapse:collapse;width:100%;font-size:11px;';
+    const TH_STYLE = 'background:#eef2ff;color:#1e3a8a;';
+    const R = 'text-align:right;';
+    const B = 'font-weight:bold;';
+
+    // -- 仕訳帳 --
     function buildJournalPrintTable(entries) {
-        let html = `<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:11px;">
-            <thead><tr style="background:#f0f0f0;">
-                <th>日付</th><th>借方科目</th><th>貸方科目</th><th style="text-align:right;">金額</th><th>税区分</th><th>取引先</th><th>摘要</th>
+        let html = `<table border="1" cellpadding="4" cellspacing="0" style="${TBL_STYLE}">
+            <thead><tr style="${TH_STYLE}">
+                <th>日付</th><th>借方科目</th><th>貸方科目</th><th style="${R}">金額</th><th>税区分</th><th>取引先</th><th>摘要</th>
             </tr></thead><tbody>`;
         entries.forEach(e => {
             html += `<tr>
-                <td>${e.entry_date || ''}</td>
-                <td>${e.debit_account || ''}</td>
-                <td>${e.credit_account || ''}</td>
-                <td style="text-align:right;">${fmt(e.amount)}</td>
-                <td>${e.tax_classification || ''}</td>
-                <td>${e.counterparty || ''}</td>
-                <td>${e.memo || ''}</td>
-            </tr>`;
+                <td>${e.entry_date||''}</td><td>${e.debit_account||''}</td><td>${e.credit_account||''}</td>
+                <td style="${R}">${fmt(e.amount)}</td><td>${e.tax_classification||''}</td>
+                <td>${e.counterparty||''}</td><td>${e.memo||''}</td></tr>`;
         });
         html += '</tbody></table>';
         return html;
     }
 
-    function buildTrialBalanceCsv(balances) {
-        let csv = 'コード,勘定科目,科目区分,借方合計,貸方合計,残高\n';
-        balances.forEach(b => {
-            csv += `${b.code},"${b.name}",${b.account_type},${b.debit_total},${b.credit_total},${b.closing_balance}\n`;
+    // -- 総勘定元帳 --
+    function buildLedgerCsv(accts) {
+        let csv = '勘定科目,日付,相手科目,摘要,借方,貸方,残高\n';
+        accts.forEach(a => {
+            a.entries.forEach(e => {
+                csv += `"${a.account_name}",${e.entry_date},"${e.counter_account||''}","${(e.memo||'').replace(/"/g,'""')}",${e.debit_amount||0},${e.credit_amount||0},${e.balance||0}\n`;
+            });
         });
         return csv;
     }
-
-    function buildTrialBalancePrintTable(balances) {
-        let html = `<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:11px;">
-            <thead><tr style="background:#f0f0f0;">
-                <th>コード</th><th>勘定科目</th><th>科目区分</th><th style="text-align:right;">借方合計</th><th style="text-align:right;">貸方合計</th><th style="text-align:right;">残高</th>
-            </tr></thead><tbody>`;
-        balances.forEach(b => {
-            html += `<tr>
-                <td>${b.code}</td>
-                <td>${b.name}</td>
-                <td>${b.account_type}</td>
-                <td style="text-align:right;">${fmt(b.debit_total)}</td>
-                <td style="text-align:right;">${fmt(b.credit_total)}</td>
-                <td style="text-align:right;font-weight:bold;">${fmt(b.closing_balance)}</td>
-            </tr>`;
+    function buildLedgerPrintTable(accts) {
+        let html = '';
+        accts.forEach(a => {
+            html += `<h3 style="margin:1.5em 0 0.3em;font-size:13px;border-bottom:1px solid #ccc;padding-bottom:4px;">${a.account_code} ${a.account_name}</h3>`;
+            html += `<table border="1" cellpadding="3" cellspacing="0" style="${TBL_STYLE}">
+                <thead><tr style="${TH_STYLE}">
+                    <th>日付</th><th>相手科目</th><th>摘要</th><th style="${R}">借方</th><th style="${R}">貸方</th><th style="${R}">残高</th>
+                </tr></thead><tbody>`;
+            html += `<tr style="background:#f8fafc;"><td colspan="3" style="${B}">前期繰越</td><td></td><td></td><td style="${R}${B}">${fmt(a.opening_balance)}</td></tr>`;
+            a.entries.forEach(e => {
+                html += `<tr>
+                    <td>${e.entry_date||''}</td><td>${e.counter_account||''}</td><td>${e.memo||''}</td>
+                    <td style="${R}">${e.debit_amount ? fmt(e.debit_amount) : ''}</td>
+                    <td style="${R}">${e.credit_amount ? fmt(e.credit_amount) : ''}</td>
+                    <td style="${R}${B}">${fmt(e.balance)}</td></tr>`;
+            });
+            html += '</tbody></table>';
         });
-        html += '</tbody></table>';
         return html;
     }
 
-    function openPrintView(title, tableHtml) {
+    // -- 貸借対照表 (B/S) -- freee風 左右対照フォーマット --
+    function buildBSCsv(balances) {
+        let csv = '区分,勘定科目,残高\n';
+        const assets = balances.filter(b => b.account_type === '資産');
+        const liab = balances.filter(b => b.account_type === '負債');
+        const equity = balances.filter(b => b.account_type === '純資産');
+        csv += '【資産の部】,,\n';
+        let aTotal = 0;
+        assets.forEach(b => { aTotal += b.closing_balance; csv += `資産,"${b.name}",${b.closing_balance}\n`; });
+        csv += `,資産合計,${aTotal}\n`;
+        csv += '【負債の部】,,\n';
+        let lTotal = 0;
+        liab.forEach(b => { lTotal += b.closing_balance; csv += `負債,"${b.name}",${b.closing_balance}\n`; });
+        csv += `,負債合計,${lTotal}\n`;
+        csv += '【純資産の部】,,\n';
+        let eTotal = 0;
+        equity.forEach(b => { eTotal += b.closing_balance; csv += `純資産,"${b.name}",${b.closing_balance}\n`; });
+        csv += `,純資産合計,${eTotal}\n`;
+        csv += `,負債・純資産合計,${lTotal + eTotal}\n`;
+        return csv;
+    }
+    function buildBSPrintTable(balances) {
+        const assets = balances.filter(b => b.account_type === '資産');
+        const liab = balances.filter(b => b.account_type === '負債');
+        const equity = balances.filter(b => b.account_type === '純資産');
+        let aTotal = 0, lTotal = 0, eTotal = 0;
+        assets.forEach(b => aTotal += b.closing_balance);
+        liab.forEach(b => lTotal += b.closing_balance);
+        equity.forEach(b => eTotal += b.closing_balance);
+
+        const S = 'border:none;padding:6px 12px;font-size:12px;';
+        const SH = `${S}font-weight:700;font-size:13px;color:#1e3a8a;padding-top:14px;`;
+        const ST = `${S}font-weight:700;background:#eef2ff;`;
+        const SG = `${S}font-weight:700;background:#1e3a8a;color:#fff;font-size:13px;`;
+
+        function buildSide(sections) {
+            let h = '';
+            sections.forEach(sec => {
+                h += `<tr><td style="${SH}" colspan="2">${sec.title}</td></tr>`;
+                sec.items.forEach(b => {
+                    h += `<tr><td style="${S}padding-left:24px;">${b.name}</td><td style="${S}${R}">${fmt(b.closing_balance)}</td></tr>`;
+                });
+                h += `<tr><td style="${ST}">${sec.subtotalLabel}</td><td style="${ST}${R}">${fmt(sec.subtotal)}</td></tr>`;
+            });
+            return h;
+        }
+
+        const leftRows = buildSide([
+            { title: '資産の部', items: assets, subtotalLabel: '資産合計', subtotal: aTotal }
+        ]);
+        const rightRows = buildSide([
+            { title: '負債の部', items: liab, subtotalLabel: '負債合計', subtotal: lTotal },
+            { title: '純資産の部', items: equity, subtotalLabel: '純資産合計', subtotal: eTotal }
+        ]);
+
+        let html = `<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr>
+            <th colspan="2" style="background:#1e3a8a;color:#fff;padding:10px;text-align:center;width:50%;border-right:2px solid #fff;">資産の部</th>
+            <th colspan="2" style="background:#1e3a8a;color:#fff;padding:10px;text-align:center;width:50%;">負債・純資産の部</th>
+        </tr></thead>
+        <tbody><tr>
+            <td colspan="2" style="vertical-align:top;border-right:1px solid #cbd5e1;"><table style="width:100%;border-collapse:collapse;">${leftRows}</table></td>
+            <td colspan="2" style="vertical-align:top;"><table style="width:100%;border-collapse:collapse;">${rightRows}</table></td>
+        </tr></tbody></table>`;
+
+        // 合計一致バー
+        html += `<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin-top:4px;">
+            <tr>
+                <td style="${SG}width:50%;border-right:2px solid #334155;">資産合計　${fmt(aTotal)}</td>
+                <td style="${SG}width:50%;">負債・純資産合計　${fmt(lTotal + eTotal)}</td>
+            </tr></table>`;
+        return html;
+    }
+
+    // -- 損益計算書 (P/L) -- freee風 階層フォーマット --
+    function buildPLCsv(balances) {
+        const revenues = balances.filter(b => b.account_type === '収益');
+        const expenses = balances.filter(b => b.account_type === '費用');
+        const sales = revenues.filter(b => b.code === '400');
+        const costOfSales = expenses.filter(b => b.code === '500');
+        const sgaExpenses = expenses.filter(b => b.code !== '500');
+        const otherRevenues = revenues.filter(b => b.code !== '400');
+
+        const salesTotal = sales.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const costTotal = costOfSales.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const grossProfit = salesTotal - costTotal;
+        const sgaTotal = sgaExpenses.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const operatingIncome = grossProfit - sgaTotal;
+        const otherRevTotal = otherRevenues.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const ordinaryIncome = operatingIncome + otherRevTotal;
+
+        let csv = '項目,金額\n';
+        csv += '【売上高】,\n';
+        sales.forEach(b => csv += `"  ${b.name}",${Math.abs(b.closing_balance)}\n`);
+        csv += `売上高合計,${salesTotal}\n`;
+        csv += '【売上原価】,\n';
+        costOfSales.forEach(b => csv += `"  ${b.name}",${Math.abs(b.closing_balance)}\n`);
+        csv += `売上原価合計,${costTotal}\n`;
+        csv += `売上総利益,${grossProfit}\n`;
+        csv += '【販売費及び一般管理費】,\n';
+        sgaExpenses.forEach(b => csv += `"  ${b.name}",${Math.abs(b.closing_balance)}\n`);
+        csv += `販売費及び一般管理費合計,${sgaTotal}\n`;
+        csv += `営業利益,${operatingIncome}\n`;
+        if (otherRevenues.length > 0) {
+            csv += '【営業外収益】,\n';
+            otherRevenues.forEach(b => csv += `"  ${b.name}",${Math.abs(b.closing_balance)}\n`);
+        }
+        csv += `経常利益,${ordinaryIncome}\n`;
+        csv += `税引前当期純利益,${ordinaryIncome}\n`;
+        csv += `当期純利益,${ordinaryIncome}\n`;
+        return csv;
+    }
+    function buildPLPrintTable(balances) {
+        const revenues = balances.filter(b => b.account_type === '収益');
+        const expenses = balances.filter(b => b.account_type === '費用');
+
+        // 科目分類
+        const sales = revenues.filter(b => b.code === '400');
+        const costOfSales = expenses.filter(b => b.code === '500');
+        const sgaExpenses = expenses.filter(b => b.code !== '500');
+        const otherRevenues = revenues.filter(b => b.code !== '400');
+
+        const salesTotal = sales.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const costTotal = costOfSales.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const grossProfit = salesTotal - costTotal;
+        const sgaTotal = sgaExpenses.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const operatingIncome = grossProfit - sgaTotal;
+        const otherRevTotal = otherRevenues.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const ordinaryIncome = operatingIncome + otherRevTotal;
+
+        const S = 'border:none;padding:5px 12px;font-size:12px;';
+        const SH = `${S}font-weight:700;font-size:13px;color:#1e3a8a;background:#f8fafc;padding-top:12px;`;
+        const SST = `${S}font-weight:700;background:#eef2ff;border-top:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;`;
+        const SBG = `${S}font-weight:700;background:#1e3a8a;color:#fff;font-size:13px;`;
+
+        function row(label, val, style) { return `<tr><td style="${style || S}">${label}</td><td style="${(style || S)}${R}">${fmt(val)}</td></tr>`; }
+        function itemRow(name, val) { return `<tr><td style="${S}padding-left:24px;">${name}</td><td style="${S}${R}">${fmt(val)}</td></tr>`; }
+        function secHeader(title) { return `<tr><td colspan="2" style="${SH}">${title}</td></tr>`; }
+        function subtotalRow(label, val) { return row(label, val, SST); }
+        function totalRow(label, val) { return row(label, val, SBG); }
+
+        let html = `<table cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;border-collapse:collapse;border:1px solid #cbd5e1;">`;
+
+        // 売上高
+        html += secHeader('売上高');
+        sales.forEach(b => html += itemRow(b.name, Math.abs(b.closing_balance)));
+        html += subtotalRow('売上高合計', salesTotal);
+
+        // 売上原価
+        html += secHeader('売上原価');
+        costOfSales.forEach(b => html += itemRow(b.name, Math.abs(b.closing_balance)));
+        html += subtotalRow('売上原価合計', costTotal);
+
+        // 売上総利益
+        html += totalRow('売上総利益', grossProfit);
+
+        // 販売費及び一般管理費
+        html += secHeader('販売費及び一般管理費');
+        sgaExpenses.forEach(b => html += itemRow(b.name, Math.abs(b.closing_balance)));
+        html += subtotalRow('販売費及び一般管理費合計', sgaTotal);
+
+        // 営業利益
+        html += totalRow('営業利益', operatingIncome);
+
+        // 営業外収益
+        if (otherRevenues.length > 0) {
+            html += secHeader('営業外収益');
+            otherRevenues.forEach(b => html += itemRow(b.name, Math.abs(b.closing_balance)));
+            html += subtotalRow('営業外収益合計', otherRevTotal);
+        }
+
+        // 経常利益
+        html += totalRow('経常利益', ordinaryIncome);
+
+        // 税引前当期純利益 = 経常利益（特別損益なし）
+        html += totalRow('税引前当期純利益', ordinaryIncome);
+
+        // 当期純利益
+        const netStyle = `${S}font-weight:700;background:#0f172a;color:#fff;font-size:14px;`;
+        html += row('当期純利益', ordinaryIncome, netStyle);
+
+        html += '</table>';
+        return html;
+    }
+
+    function openPrintView(title, period, tableHtml) {
         const win = window.open('', '_blank');
         win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
-            <style>body{font-family:sans-serif;padding:20px;}h1{font-size:18px;margin-bottom:10px;}
-            @media print{button{display:none;}}</style>
+            <style>body{font-family:'Inter',sans-serif;padding:20px;color:#1e293b;}
+            h1{font-size:18px;margin-bottom:4px;}
+            .meta{font-size:12px;color:#64748b;margin-bottom:16px;}
+            table{page-break-inside:auto;} tr{page-break-inside:avoid;}
+            @media print{.no-print{display:none;}}</style>
         </head><body>
             <h1>${title}</h1>
-            <p style="font-size:12px;color:#666;">出力日: ${todayStr()}</p>
+            <p class="meta">期間: ${period}　|　出力日: ${todayStr()}</p>
             ${tableHtml}
-            <br><button onclick="window.print()" style="padding:8px 16px;font-size:14px;cursor:pointer;">印刷 / PDF保存</button>
+            <br><button class="no-print" onclick="window.print()" style="padding:8px 20px;font-size:14px;cursor:pointer;border:1px solid #cbd5e1;border-radius:6px;background:#fff;">印刷 / PDF保存</button>
         </body></html>`);
         win.document.close();
     }
 
     // ============================================================
-    //  Section 15: Keyboard Shortcuts
+    //  Section 15a: Journal Entry Detail Modal (shared)
+    // ============================================================
+    const jeDetailModal = document.getElementById('je-detail-modal');
+    const jeDetailClose = document.getElementById('je-detail-close');
+    const jedDate = document.getElementById('jed-date');
+    const jedDebit = document.getElementById('jed-debit');
+    const jedCredit = document.getElementById('jed-credit');
+    const jedAmount = document.getElementById('jed-amount');
+    const jedTax = document.getElementById('jed-tax');
+    const jedCounterparty = document.getElementById('jed-counterparty');
+    const jedMemo = document.getElementById('jed-memo');
+    const jedEvidenceRow = document.getElementById('jed-evidence-row');
+    const jedEvidenceLink = document.getElementById('jed-evidence-link');
+    const jedDelete = document.getElementById('jed-delete');
+    const jedCancel = document.getElementById('jed-cancel');
+    const jedSave = document.getElementById('jed-save');
+
+    let jedCurrentId = null;
+    let jedOnSaved = null; // callback after save/delete
+
+    function openJEDetailModal(entry, onSaved) {
+        jedCurrentId = entry.id;
+        jedOnSaved = onSaved;
+
+        jedDate.value = entry.entry_date || '';
+        jedDebit.value = entry.debit_account || '';
+        jedCredit.value = entry.credit_account || '';
+        jedAmount.value = entry.amount || 0;
+        jedTax.value = entry.tax_classification || '10%';
+        jedCounterparty.value = entry.counterparty || '';
+        jedMemo.value = entry.memo || '';
+
+        if (entry.evidence_url) {
+            jedEvidenceRow.classList.remove('hidden');
+            jedEvidenceLink.href = entry.evidence_url;
+        } else {
+            jedEvidenceRow.classList.add('hidden');
+        }
+
+        jeDetailModal.classList.remove('hidden');
+    }
+
+    function closeJEDetailModal() {
+        jeDetailModal.classList.add('hidden');
+        jedCurrentId = null;
+    }
+
+    jeDetailClose.addEventListener('click', closeJEDetailModal);
+    jedCancel.addEventListener('click', closeJEDetailModal);
+    jeDetailModal.addEventListener('click', (e) => {
+        if (e.target === jeDetailModal) closeJEDetailModal();
+    });
+
+    jedSave.addEventListener('click', async () => {
+        if (!jedCurrentId) return;
+        const updated = {
+            entry_date: jedDate.value,
+            debit_account: jedDebit.value,
+            credit_account: jedCredit.value,
+            amount: parseInt(jedAmount.value) || 0,
+            tax_classification: jedTax.value,
+            counterparty: jedCounterparty.value,
+            memo: jedMemo.value,
+        };
+        try {
+            const res = await fetchAPI(`/api/journal/${jedCurrentId}`, 'PUT', updated);
+            if (res.status === 'success') {
+                showToast('更新しました');
+                closeJEDetailModal();
+                if (jedOnSaved) jedOnSaved();
+            } else {
+                showToast('更新に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        }
+    });
+
+    jedDelete.addEventListener('click', async () => {
+        if (!jedCurrentId) return;
+        if (!confirm('この仕訳を削除しますか？')) return;
+        try {
+            const res = await fetchAPI(`/api/journal/${jedCurrentId}`, 'DELETE');
+            if (res.status === 'success') {
+                showToast('削除しました');
+                closeJEDetailModal();
+                if (jedOnSaved) jedOnSaved();
+            } else {
+                showToast('削除に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        }
+    });
+
+    // ============================================================
+    //  Section 15b: AI Chat Bot
+    // ============================================================
+    const chatFab = document.getElementById('ai-chat-fab');
+    const chatPanel = document.getElementById('ai-chat-panel');
+    const chatClose = document.getElementById('ai-chat-close');
+    const chatMessages = document.getElementById('ai-chat-messages');
+    const chatInput = document.getElementById('ai-chat-input');
+    const chatSendBtn = document.getElementById('ai-chat-send');
+    let chatHistory = [];
+
+    chatFab.addEventListener('click', () => {
+        chatPanel.classList.toggle('hidden');
+        if (!chatPanel.classList.contains('hidden')) {
+            chatInput.focus();
+        }
+    });
+    chatClose.addEventListener('click', () => chatPanel.classList.add('hidden'));
+
+    async function sendChatMessage() {
+        const msg = chatInput.value.trim();
+        if (!msg) return;
+
+        const apiKey = localStorage.getItem('gemini_api_key');
+        if (!apiKey) {
+            addChatMsg('bot', 'Gemini APIキーが設定されていません。右上の設定からAPIキーを登録してください。');
+            return;
+        }
+
+        // Add user message
+        addChatMsg('user', msg);
+        chatInput.value = '';
+        chatHistory.push({ role: 'user', text: msg });
+
+        // Show loading
+        const loadingEl = addChatMsg('loading', '考え中...');
+        chatSendBtn.disabled = true;
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: msg,
+                    history: chatHistory,
+                    gemini_api_key: apiKey,
+                })
+            });
+            const data = await res.json();
+
+            // Remove loading
+            loadingEl.remove();
+
+            if (data.reply) {
+                addChatMsg('bot', data.reply);
+                chatHistory.push({ role: 'model', text: data.reply });
+            } else {
+                addChatMsg('bot', data.error || 'エラーが発生しました。');
+            }
+        } catch (err) {
+            loadingEl.remove();
+            addChatMsg('bot', '通信エラーが発生しました。');
+        } finally {
+            chatSendBtn.disabled = false;
+            chatInput.focus();
+        }
+    }
+
+    function addChatMsg(type, text) {
+        const div = document.createElement('div');
+        div.className = `ai-msg ai-msg-${type}`;
+        div.textContent = text;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return div;
+    }
+
+    chatSendBtn.addEventListener('click', sendChatMessage);
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendChatMessage();
+        }
+    });
+
+    // ============================================================
+    //  Section 16: Keyboard Shortcuts
     // ============================================================
     document.addEventListener('keydown', (e) => {
         // Ctrl+Enter to submit journal form when in journal-input view
@@ -1658,11 +2609,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 journalForm.dispatchEvent(new Event('submit'));
             }
         }
-        // Escape to go back to menu
-        if (e.key === 'Escape' && !settingsModal.classList.contains('hidden')) {
-            settingsModal.classList.add('hidden');
-        } else if (e.key === 'Escape' && !menuGrid.classList.contains('active')) {
-            showMenu();
+        // Escape to close chat or go back to menu
+        if (e.key === 'Escape') {
+            if (!chatPanel.classList.contains('hidden')) {
+                chatPanel.classList.add('hidden');
+            } else if (!settingsModal.classList.contains('hidden')) {
+                settingsModal.classList.add('hidden');
+            } else if (!menuGrid.classList.contains('active')) {
+                showMenu();
+            }
         }
     });
+
+    // ============================================================
+    //  Initial route from hash (must be at end after all declarations)
+    // ============================================================
+    const initHash = location.hash.replace('#', '');
+    if (initHash && initHash !== 'menu') {
+        showView(initHash);
+    }
 });
