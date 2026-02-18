@@ -67,6 +67,16 @@ body {
     flex-shrink: 0;
 }
 
+.user-display {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+}
+
 /* Back Button */
 .btn-back {
     display: inline-flex;

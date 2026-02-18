@@ -5,4 +5,5 @@ google-generativeai
 google-auth
 google-api-python-client
 pillow
+requests
 gunicorn

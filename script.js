@@ -62,15 +62,40 @@ document.addEventListener('DOMContentLoaded', () => {
         if (t) google.accounts.oauth2.revoke(t, () => {});
         sessionStorage.removeItem('access_token');
         sessionStorage.removeItem('token_expiration');
+        sessionStorage.removeItem('user_email');
+        sessionStorage.removeItem('user_name');
         location.reload();
     }
-    function onLoginSuccess() {
+    async function onLoginSuccess() {
         loginOverlay.classList.add('hidden');
         authBtn.textContent = 'ログアウト';
         authBtn.onclick = handleLogout;
         settingsBtn.style.display = '';
+
+        // Fetch user info and display in header
+        try {
+            const me = await fetchAPI('/api/me');
+            if (me && me.email) {
+                const userDisplay = document.getElementById('user-display');
+                if (userDisplay) {
+                    userDisplay.textContent = me.name || me.email;
+                    userDisplay.title = me.email;
+                    userDisplay.classList.remove('hidden');
+                }
+            }
+        } catch (e) { /* ignore — will still work without display */ }
+
+        // Load API key: prefer server-side setting, fall back to localStorage
+        try {
+            const settings = await fetchAPI('/api/settings');
+            if (settings && settings.gemini_api_key) {
+                localStorage.setItem('gemini_api_key', settings.gemini_api_key);
+            }
+        } catch (e) { /* ignore */ }
+
         const apiKey = localStorage.getItem('gemini_api_key');
         if (!apiKey) openSettings();
+
         loadAccounts();
         loadRecentEntries();
         loadCounterparties();
@@ -179,6 +204,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================================
     async function fetchAPI(url, method = 'GET', body = null) {
         const opts = { method, headers: {}, cache: 'no-store' };
+        // Add Authorization header for all API requests
+        if (accessToken) {
+            opts.headers['Authorization'] = 'Bearer ' + accessToken;
+        }
         if (body && !(body instanceof FormData)) {
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
@@ -186,6 +215,16 @@ document.addEventListener('DOMContentLoaded', () => {
             opts.body = body;
         }
         const res = await fetch(url, opts);
+        if (res.status === 401) {
+            // Token expired or invalid — show login overlay
+            showToast('セッションが切れました。再ログインしてください', true);
+            sessionStorage.removeItem('access_token');
+            sessionStorage.removeItem('token_expiration');
+            loginOverlay.classList.remove('hidden');
+            authBtn.textContent = 'Googleでログイン';
+            authBtn.onclick = handleLogin;
+            throw new Error('Unauthorized');
+        }
         return res.json();
     }
 
@@ -2558,16 +2597,11 @@ document.addEventListener('DOMContentLoaded', () => {
         chatSendBtn.disabled = true;
 
         try {
-            const res = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: msg,
-                    history: chatHistory,
-                    gemini_api_key: apiKey,
-                })
+            const data = await fetchAPI('/api/chat', 'POST', {
+                message: msg,
+                history: chatHistory,
+                gemini_api_key: apiKey,
             });
-            const data = await res.json();
 
             // Remove loading
             loadingEl.remove();

@@ -57,6 +57,15 @@ DEFAULT_ACCOUNTS = [
 ]
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS users (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    email       TEXT UNIQUE NOT NULL,
+    name        TEXT DEFAULT '',
+    picture     TEXT DEFAULT '',
+    created_at  TEXT DEFAULT (datetime('now')),
+    last_login  TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS accounts_master (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     code            TEXT NOT NULL UNIQUE,
@@ -71,6 +80,7 @@ CREATE TABLE IF NOT EXISTS accounts_master (
 
 CREATE TABLE IF NOT EXISTS journal_entries (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             INTEGER NOT NULL DEFAULT 0,
     entry_date          TEXT NOT NULL,
     debit_account_id    INTEGER NOT NULL,
     credit_account_id   INTEGER NOT NULL,
@@ -92,19 +102,21 @@ CREATE INDEX IF NOT EXISTS idx_journal_entry_date ON journal_entries(entry_date)
 CREATE INDEX IF NOT EXISTS idx_journal_debit ON journal_entries(debit_account_id);
 CREATE INDEX IF NOT EXISTS idx_journal_credit ON journal_entries(credit_account_id);
 CREATE INDEX IF NOT EXISTS idx_journal_deleted ON journal_entries(is_deleted);
+CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_entries(user_id);
 
 CREATE TABLE IF NOT EXISTS opening_balances (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL DEFAULT 0,
     fiscal_year TEXT NOT NULL,
     account_id  INTEGER NOT NULL,
     amount      INTEGER NOT NULL DEFAULT 0,
     note        TEXT DEFAULT '',
-    FOREIGN KEY (account_id) REFERENCES accounts_master(id),
-    UNIQUE(fiscal_year, account_id)
+    FOREIGN KEY (account_id) REFERENCES accounts_master(id)
 );
 
 CREATE TABLE IF NOT EXISTS counterparties (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL DEFAULT 0,
     name            TEXT NOT NULL,
     code            TEXT DEFAULT '',
     contact_info    TEXT DEFAULT '',
@@ -114,10 +126,13 @@ CREATE TABLE IF NOT EXISTS counterparties (
     updated_at      TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_counterparties_name ON counterparties(name);
+CREATE INDEX IF NOT EXISTS idx_counterparties_user ON counterparties(user_id);
 
-CREATE TABLE IF NOT EXISTS settings (
-    key     TEXT PRIMARY KEY,
-    value   TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id     INTEGER NOT NULL DEFAULT 0,
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
 );
 """
 
@@ -132,11 +147,92 @@ def get_db():
     return conn
 
 
+def migrate_db():
+    """Run schema migrations for multi-user support."""
+    conn = get_db()
+    try:
+        # Check if users table exists
+        has_users = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+
+        if not has_users:
+            # First migration: add users table
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT DEFAULT '',
+                picture TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                last_login TEXT DEFAULT (datetime('now'))
+            )""")
+            print("Migration: Created users table.")
+
+        # Add user_id to journal_entries if missing
+        cols = [r['name'] for r in conn.execute("PRAGMA table_info(journal_entries)").fetchall()]
+        if 'user_id' not in cols:
+            conn.execute("ALTER TABLE journal_entries ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_entries(user_id)")
+            print("Migration: Added user_id to journal_entries.")
+
+        # Add user_id to counterparties if missing
+        cols = [r['name'] for r in conn.execute("PRAGMA table_info(counterparties)").fetchall()]
+        if 'user_id' not in cols:
+            conn.execute("ALTER TABLE counterparties ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_counterparties_user ON counterparties(user_id)")
+            print("Migration: Added user_id to counterparties.")
+
+        # Add user_id to opening_balances if missing
+        cols = [r['name'] for r in conn.execute("PRAGMA table_info(opening_balances)").fetchall()]
+        if 'user_id' not in cols:
+            conn.execute("ALTER TABLE opening_balances ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+            print("Migration: Added user_id to opening_balances.")
+
+        # Migrate settings to user_settings if needed
+        has_user_settings = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='user_settings'"
+        ).fetchone()
+        if not has_user_settings:
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER NOT NULL DEFAULT 0,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (user_id, key)
+            )""")
+            # Copy existing settings to user_settings with user_id=0
+            has_old_settings = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
+            ).fetchone()
+            if has_old_settings:
+                conn.execute("""
+                INSERT OR IGNORE INTO user_settings (user_id, key, value)
+                SELECT 0, key, value FROM settings
+                """)
+            print("Migration: Created user_settings table.")
+
+        conn.commit()
+        print("Migration completed successfully.")
+    except Exception as e:
+        print(f"Migration error: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+
 def init_db():
     """Create tables and seed account master data if empty."""
     conn = get_db()
     try:
-        conn.executescript(SCHEMA_SQL)
+        # Execute schema — may partially fail on existing DBs (e.g. user_id indexes)
+        # That's OK; migrate_db() below will handle the rest
+        try:
+            conn.executescript(SCHEMA_SQL)
+        except Exception as e:
+            # Existing DB without user_id columns — indexes will fail
+            # Tables that already exist are unaffected (IF NOT EXISTS)
+            print(f"Schema note (will be fixed by migration): {e}")
 
         # Seed accounts only if table is empty
         count = conn.execute("SELECT COUNT(*) FROM accounts_master").fetchone()[0]
@@ -147,26 +243,6 @@ def init_db():
             )
             print(f"Seeded {len(DEFAULT_ACCOUNTS)} accounts into accounts_master.")
 
-        # Seed default settings
-        defaults = [
-            ("fiscal_year_start", "04-01"),
-            ("business_name", ""),
-        ]
-        for key, value in defaults:
-            conn.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-                (key, value)
-            )
-
-        # Migrate existing counterparty strings into new counterparties table
-        cp_count = conn.execute("SELECT COUNT(*) FROM counterparties").fetchone()[0]
-        if cp_count == 0:
-            conn.execute("""
-                INSERT OR IGNORE INTO counterparties (name)
-                SELECT DISTINCT counterparty FROM journal_entries
-                WHERE is_deleted = 0 AND counterparty != ''
-            """)
-
         conn.commit()
         print("Database initialized successfully.")
     except Exception as e:
@@ -174,6 +250,9 @@ def init_db():
         conn.rollback()
     finally:
         conn.close()
+
+    # Run migrations for existing databases (adds user_id columns, indexes, etc.)
+    migrate_db()
 
 
 if __name__ == "__main__":

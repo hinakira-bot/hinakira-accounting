@@ -1,11 +1,13 @@
 """
 Hinakira会計 - Flask Backend
 Main routing and API endpoints.
+Multi-user support via Google OAuth user identification.
 """
 import os
 import io
 import json
-from flask import Flask, request, jsonify, send_from_directory
+import requests as http_requests
+from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
@@ -22,8 +24,79 @@ load_dotenv()
 app = Flask(__name__, static_folder='.', static_url_path='/static')
 CORS(app)
 
-# Initialize database on startup
+# Initialize database on startup (includes migration for existing DBs)
 db.init_db()
+
+
+# ============================
+#  Authentication Middleware
+# ============================
+def get_current_user():
+    """Extract user from Authorization header (Bearer token).
+    Calls Google UserInfo API to get email, then finds/creates user in DB.
+    Caches result in flask.g for the duration of the request."""
+    if hasattr(g, 'user') and g.user:
+        return g.user
+
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return None
+
+    access_token = auth_header[7:]
+    if not access_token:
+        return None
+
+    try:
+        # Call Google UserInfo API
+        resp = http_requests.get(
+            'https://www.googleapis.com/oauth2/v3/userinfo',
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=5
+        )
+        if resp.status_code != 200:
+            return None
+
+        info = resp.json()
+        email = info.get('email', '')
+        if not email:
+            return None
+
+        user = models.get_or_create_user(
+            email=email,
+            name=info.get('name', ''),
+            picture=info.get('picture', '')
+        )
+        g.user = user
+        return user
+    except Exception as e:
+        print(f"Auth error: {e}")
+        return None
+
+
+@app.before_request
+def require_auth():
+    """Require authentication for API endpoints (except static files and drive APIs)."""
+    path = request.path
+
+    # Static files don't need auth
+    if not path.startswith('/api/'):
+        return None
+
+    # Drive APIs use access_token in body (handled internally)
+    if path.startswith('/api/drive/'):
+        return None
+
+    # Accounts API is global (no user-scoping needed, but still require login)
+    # All other APIs need user identification
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "認証が必要です。再ログインしてください。"}), 401
+
+
+def get_user_id():
+    """Get current user's ID. Must be called after require_auth middleware."""
+    user = get_current_user()
+    return user['id'] if user else 0
 
 
 # --- Google Drive Upload Helper ---
@@ -75,7 +148,7 @@ def get_or_create_folder(service, folder_name, parent_id=None):
 
 
 def get_all_folder_ids(service, folder_name, parent_ids=None):
-    """Get ALL folder IDs matching name under any of the parent_ids. Handles duplicate folders."""
+    """Get ALL folder IDs matching name under any of the parent_ids."""
     all_ids = []
     if parent_ids:
         for pid in parent_ids:
@@ -143,19 +216,16 @@ def api_drive_inbox_list():
         creds = Credentials(token=access_token)
         service = build('drive', 'v3', credentials=creds)
 
-        # Find ALL Accounting_Evidence folders (handle duplicates)
         root_ids = get_all_folder_ids(service, "Accounting_Evidence")
         if not root_ids:
             return jsonify({"files": [], "inbox_folder_ids": []})
 
-        # Find ALL inbox folders under any root
         inbox_ids = get_all_folder_ids(service, "inbox", root_ids)
         if not inbox_ids:
             return jsonify({"files": [], "inbox_folder_ids": []})
 
         print(f"[Drive Inbox] root_ids={root_ids}, inbox_ids={inbox_ids}", file=sys.stderr, flush=True)
 
-        # List files from ALL inbox folders
         all_files = []
         for iid in inbox_ids:
             q = f"'{iid}' in parents and trashed=false"
@@ -190,9 +260,12 @@ def api_drive_inbox_analyze():
     if not file_ids:
         return jsonify({"error": "ファイルが指定されていません"}), 400
 
+    # Get user_id from Authorization header if available
+    uid = get_user_id()
+
     ai_service.configure_gemini(gemini_api_key)
-    history = models.get_accounting_history()
-    existing = models.get_existing_entry_keys()
+    history = models.get_accounting_history(user_id=uid)
+    existing = models.get_existing_entry_keys(user_id=uid)
 
     try:
         creds = Credentials(token=access_token)
@@ -201,13 +274,11 @@ def api_drive_inbox_analyze():
 
         results = []
         for fid in file_ids:
-            # Get file metadata
             meta = service.files().get(fileId=fid, fields='name, mimeType, webViewLink').execute()
             fname = meta.get('name', '')
             mime = meta.get('mimeType', '')
             web_link = meta.get('webViewLink', '')
 
-            # Download content
             req = service.files().get_media(fileId=fid)
             buf = io.BytesIO()
             dl = MediaIoBaseDownload(buf, req)
@@ -217,7 +288,6 @@ def api_drive_inbox_analyze():
             buf.seek(0)
             fbytes = buf.read()
 
-            # AI analysis
             if fname.lower().endswith('.csv'):
                 res = ai_service.analyze_csv(fbytes, history)
             else:
@@ -256,7 +326,6 @@ def api_drive_inbox_move():
         moved = 0
         for fid in file_ids:
             try:
-                # Get current parents to know which inbox folder to remove
                 f = service.files().get(fileId=fid, fields='parents').execute()
                 current_parents = ','.join(f.get('parents', []))
                 service.files().update(
@@ -275,7 +344,19 @@ def api_drive_inbox_move():
 
 
 # ============================
-#  Accounts API
+#  User Info API
+# ============================
+@app.route('/api/me', methods=['GET'])
+def api_me():
+    """Get current user info."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    return jsonify({"user": user})
+
+
+# ============================
+#  Accounts API (Global)
 # ============================
 @app.route('/api/accounts', methods=['GET'])
 def api_accounts():
@@ -312,11 +393,12 @@ def api_accounts_delete(account_id):
 
 
 # ============================
-#  Journal Entries API (CRUD)
+#  Journal Entries API (user-scoped)
 # ============================
 @app.route('/api/journal', methods=['GET'])
 def api_journal_list():
     """List journal entries with filters and pagination."""
+    uid = get_user_id()
     filters = {
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
@@ -328,28 +410,28 @@ def api_journal_list():
         'page': request.args.get('page', 1),
         'per_page': request.args.get('per_page', 20),
     }
-    # Remove None values
     filters = {k: v for k, v in filters.items() if v is not None}
-    result = models.get_journal_entries(filters)
+    result = models.get_journal_entries(filters, user_id=uid)
     return jsonify(result)
 
 
 @app.route('/api/journal/recent', methods=['GET'])
 def api_journal_recent():
-    """Get recent journal entries (for display below input form)."""
+    """Get recent journal entries."""
+    uid = get_user_id()
     limit = request.args.get('limit', 5, type=int)
-    entries = models.get_recent_entries(limit)
+    entries = models.get_recent_entries(limit, user_id=uid)
     return jsonify({"entries": entries})
 
 
 @app.route('/api/journal', methods=['POST'])
 def api_journal_create():
     """Create one or more journal entries."""
+    uid = get_user_id()
     data = request.json
     if not data:
         return jsonify({"error": "No data provided"}), 400
 
-    # Support both single entry and batch
     if isinstance(data, list):
         entries = data
     elif isinstance(data, dict) and 'entries' in data:
@@ -357,7 +439,7 @@ def api_journal_create():
     else:
         entries = [data]
 
-    ids = models.create_journal_entries_batch(entries)
+    ids = models.create_journal_entries_batch(entries, user_id=uid)
     successful = [i for i in ids if i is not None]
     return jsonify({
         "status": "success",
@@ -369,11 +451,12 @@ def api_journal_create():
 @app.route('/api/journal/<int:entry_id>', methods=['PUT'])
 def api_journal_update(entry_id):
     """Update a journal entry."""
+    uid = get_user_id()
     data = request.json
     if not data:
         return jsonify({"error": "No data provided"}), 400
 
-    success = models.update_journal_entry(entry_id, data)
+    success = models.update_journal_entry(entry_id, data, user_id=uid)
     if success:
         return jsonify({"status": "success"})
     else:
@@ -383,7 +466,8 @@ def api_journal_update(entry_id):
 @app.route('/api/journal/<int:entry_id>', methods=['DELETE'])
 def api_journal_delete(entry_id):
     """Soft-delete a journal entry."""
-    success = models.delete_journal_entry(entry_id)
+    uid = get_user_id()
+    success = models.delete_journal_entry(entry_id, user_id=uid)
     if success:
         return jsonify({"status": "success"})
     else:
@@ -391,23 +475,25 @@ def api_journal_delete(entry_id):
 
 
 # ============================
-#  Trial Balance API
+#  Trial Balance API (user-scoped)
 # ============================
 @app.route('/api/trial-balance', methods=['GET'])
 def api_trial_balance():
     """Get trial balance by account for a date range."""
+    uid = get_user_id()
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
-    result = models.get_trial_balance(start_date, end_date)
+    result = models.get_trial_balance(start_date, end_date, user_id=uid)
     return jsonify({"balances": result})
 
 
 # ============================
-#  AI Analysis API
+#  AI Analysis API (user-scoped)
 # ============================
 @app.route('/api/analyze', methods=['POST'])
 def api_analyze():
     """Upload and analyze files with AI."""
+    uid = get_user_id()
     if 'files' not in request.files:
         return jsonify({"error": "No files"}), 400
 
@@ -420,9 +506,8 @@ def api_analyze():
 
     ai_service.configure_gemini(gemini_api_key)
 
-    # Get history from SQLite (instead of Sheets)
-    history = models.get_accounting_history()
-    existing = models.get_existing_entry_keys()
+    history = models.get_accounting_history(user_id=uid)
+    existing = models.get_existing_entry_keys(user_id=uid)
 
     results = []
     for file in files:
@@ -430,12 +515,10 @@ def api_analyze():
         ftype = file.content_type
         fbytes = file.read()
 
-        # Upload evidence to Drive (optional)
         ev_url = ""
         if access_token:
             ev_url = upload_to_drive_processed(fbytes, file.filename, ftype, access_token)
 
-        # AI Analysis
         if fname.endswith('.csv'):
             res = ai_service.analyze_csv(fbytes, history)
         else:
@@ -453,13 +536,14 @@ def api_analyze():
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
     """AI-powered account prediction."""
+    uid = get_user_id()
     data = request.json.get('data', [])
     gemini_api_key = request.json.get('gemini_api_key')
 
     if not data or not gemini_api_key:
         return jsonify({"error": "Missing data or API key"}), 400
 
-    history = models.get_accounting_history()
+    history = models.get_accounting_history(user_id=uid)
     accounts = models.get_accounts()
     valid_account_names = [a['name'] for a in accounts]
 
@@ -471,7 +555,7 @@ def api_predict():
 
 
 # ============================
-#  AI Chat API
+#  AI Chat API (user-scoped)
 # ============================
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
@@ -488,7 +572,6 @@ def api_chat():
 
     ai_service.configure_gemini(gemini_api_key)
 
-    # Get app context for the AI
     account_list = models.get_accounts()
     account_names = ", ".join([f"{a['name']}({a['code']})" for a in account_list[:40]])
 
@@ -525,12 +608,11 @@ def api_chat():
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
 
-        # Build conversation history
         contents = []
         contents.append({"role": "user", "parts": [{"text": system_prompt + "\n\n（ここからユーザーとの会話開始）"}]})
         contents.append({"role": "model", "parts": [{"text": "はい、Hinakira会計のAIアシスタントです。会計処理やツールの使い方について、お気軽にご質問ください。"}]})
 
-        for h in history[-10:]:  # Last 10 messages
+        for h in history[-10:]:
             role = "user" if h.get('role') == 'user' else "model"
             contents.append({"role": role, "parts": [{"text": h.get('text', '')}]})
 
@@ -544,14 +626,15 @@ def api_chat():
 
 
 # ============================
-#  Settings API
+#  Settings API (user-scoped)
 # ============================
 @app.route('/api/settings', methods=['GET'])
 def api_settings_get():
-    """Get all settings."""
+    """Get user's settings."""
+    uid = get_user_id()
     conn = db.get_db()
     try:
-        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        rows = conn.execute("SELECT key, value FROM user_settings WHERE user_id = ?", (uid,)).fetchall()
         return jsonify({r['key']: r['value'] for r in rows})
     finally:
         conn.close()
@@ -559,7 +642,8 @@ def api_settings_get():
 
 @app.route('/api/settings', methods=['POST'])
 def api_settings_update():
-    """Update settings."""
+    """Update user's settings."""
+    uid = get_user_id()
     data = request.json
     if not data:
         return jsonify({"error": "No data"}), 400
@@ -568,8 +652,8 @@ def api_settings_update():
     try:
         for key, value in data.items():
             conn.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                (key, str(value))
+                "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                (uid, key, str(value))
             )
         conn.commit()
         return jsonify({"status": "success"})
@@ -581,104 +665,114 @@ def api_settings_update():
 
 
 # ============================
-#  Counterparties API (CRUD)
+#  Counterparties API (user-scoped)
 # ============================
 @app.route('/api/counterparties', methods=['GET'])
 def api_counterparties():
     """Get counterparty names for autocomplete."""
-    counterparties = models.get_counterparty_names()
+    uid = get_user_id()
+    counterparties = models.get_counterparty_names(user_id=uid)
     return jsonify({"counterparties": counterparties})
 
 
 @app.route('/api/counterparties/list', methods=['GET'])
 def api_counterparties_list():
     """Get all counterparties with full details."""
-    items = models.get_counterparties_list()
+    uid = get_user_id()
+    items = models.get_counterparties_list(user_id=uid)
     return jsonify({"counterparties": items})
 
 
 @app.route('/api/counterparties', methods=['POST'])
 def api_counterparty_create():
     """Create a new counterparty."""
+    uid = get_user_id()
     data = request.json
     if not data or not data.get('name'):
         return jsonify({"error": "Name is required"}), 400
-    new_id = models.create_counterparty(data)
+    new_id = models.create_counterparty(data, user_id=uid)
     return jsonify({"status": "success", "id": new_id})
 
 
 @app.route('/api/counterparties/<int:cp_id>', methods=['PUT'])
 def api_counterparty_update(cp_id):
     """Update a counterparty."""
+    uid = get_user_id()
     data = request.json
     if not data:
         return jsonify({"error": "No data"}), 400
-    success = models.update_counterparty(cp_id, data)
+    success = models.update_counterparty(cp_id, data, user_id=uid)
     return jsonify({"status": "success"}) if success else (jsonify({"error": "Failed"}), 400)
 
 
 @app.route('/api/counterparties/<int:cp_id>', methods=['DELETE'])
 def api_counterparty_delete(cp_id):
     """Soft-delete a counterparty."""
-    success = models.delete_counterparty(cp_id)
+    uid = get_user_id()
+    success = models.delete_counterparty(cp_id, user_id=uid)
     return jsonify({"status": "success"}) if success else (jsonify({"error": "Failed"}), 400)
 
 
 # ============================
-#  Opening Balances API
+#  Opening Balances API (user-scoped)
 # ============================
 @app.route('/api/opening-balances', methods=['GET'])
 def api_opening_balances_get():
     """Get opening balances for a fiscal year."""
+    uid = get_user_id()
     fiscal_year = request.args.get('fiscal_year', str(__import__('datetime').date.today().year))
-    balances = models.get_opening_balances(fiscal_year)
+    balances = models.get_opening_balances(fiscal_year, user_id=uid)
     return jsonify({"balances": balances, "fiscal_year": fiscal_year})
 
 
 @app.route('/api/opening-balances', methods=['POST'])
 def api_opening_balances_save():
     """Bulk save opening balances."""
+    uid = get_user_id()
     data = request.json
     if not data:
         return jsonify({"error": "No data"}), 400
     fiscal_year = data.get('fiscal_year', str(__import__('datetime').date.today().year))
     balances = data.get('balances', [])
-    success = models.save_opening_balances(fiscal_year, balances)
+    success = models.save_opening_balances(fiscal_year, balances, user_id=uid)
     return jsonify({"status": "success"}) if success else (jsonify({"error": "Save failed"}), 500)
 
 
 # ============================
-#  General Ledger API
+#  General Ledger API (user-scoped)
 # ============================
 @app.route('/api/ledger/<int:account_id>', methods=['GET'])
 def api_ledger(account_id):
     """Get per-account entries with running balance."""
+    uid = get_user_id()
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
-    result = models.get_ledger_entries(account_id, start_date, end_date)
+    result = models.get_ledger_entries(account_id, start_date, end_date, user_id=uid)
     return jsonify(result)
 
 
 # ============================
-#  Backup API
+#  Backup API (user-scoped)
 # ============================
 @app.route('/api/backup/download', methods=['GET'])
 def api_backup_download():
     """Download database backup as JSON."""
-    data = models.get_full_backup()
+    uid = get_user_id()
+    data = models.get_full_backup(user_id=uid)
     return jsonify(data)
 
 
 @app.route('/api/backup/drive', methods=['POST'])
 def api_backup_to_drive():
     """Upload JSON backup to Google Drive."""
+    uid = get_user_id()
     data = request.json or {}
     access_token = data.get('access_token', '')
     if not access_token:
         return jsonify({"error": "Googleログインが必要です"}), 401
 
     try:
-        backup_data = models.get_full_backup()
+        backup_data = models.get_full_backup(user_id=uid)
         backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2)
         backup_bytes = backup_json.encode('utf-8')
 
@@ -705,7 +799,6 @@ def api_backup_drive_list():
         creds = Credentials(token=access_token)
         service = build('drive', 'v3', credentials=creds)
 
-        # Find backup folder
         folder_name = "Accounting_Evidence"
         results = service.files().list(
             q=f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false",
@@ -717,7 +810,6 @@ def api_backup_drive_list():
 
         folder_id = items[0]['id']
 
-        # List backup JSON files
         results = service.files().list(
             q=f"'{folder_id}' in parents and name contains 'hinakira_backup' and mimeType='application/json' and trashed=false",
             spaces='drive',
@@ -734,6 +826,7 @@ def api_backup_drive_list():
 @app.route('/api/backup/drive/restore', methods=['POST'])
 def api_backup_drive_restore():
     """Download and restore a backup file from Google Drive."""
+    uid = get_user_id()
     data = request.json or {}
     access_token = data.get('access_token', '')
     file_id = data.get('file_id', '')
@@ -746,7 +839,6 @@ def api_backup_drive_restore():
         creds = Credentials(token=access_token)
         service = build('drive', 'v3', credentials=creds)
 
-        # Download file content
         from googleapiclient.http import MediaIoBaseDownload
         request_dl = service.files().get_media(fileId=file_id)
         buffer = io.BytesIO()
@@ -759,12 +851,11 @@ def api_backup_drive_restore():
         content = buffer.read().decode('utf-8')
         backup_data = json.loads(content)
 
-        # Validate
         expected_tables = ['accounts_master', 'journal_entries', 'opening_balances', 'counterparties', 'settings']
         if not any(t in backup_data for t in expected_tables):
             return jsonify({"error": "有効なバックアップデータが見つかりません"}), 400
 
-        summary = models.restore_from_backup(backup_data)
+        summary = models.restore_from_backup(backup_data, user_id=uid)
         return jsonify({"status": "success", "summary": summary})
     except Exception as e:
         return jsonify({"error": f"復元に失敗しました: {str(e)}"}), 500
@@ -773,6 +864,7 @@ def api_backup_drive_restore():
 @app.route('/api/backup/restore', methods=['POST'])
 def api_backup_restore():
     """Restore database from JSON backup file."""
+    uid = get_user_id()
     if 'file' not in request.files:
         return jsonify({"error": "ファイルが選択されていません"}), 400
 
@@ -789,29 +881,29 @@ def api_backup_restore():
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         return jsonify({"error": f"JSONファイルの読み込みに失敗しました: {str(e)}"}), 400
 
-    # Validate structure
     expected_tables = ['accounts_master', 'journal_entries', 'opening_balances', 'counterparties', 'settings']
     has_any = any(t in data for t in expected_tables)
     if not has_any:
         return jsonify({"error": "有効なバックアップデータが見つかりません"}), 400
 
     try:
-        summary = models.restore_from_backup(data)
+        summary = models.restore_from_backup(data, user_id=uid)
         return jsonify({"status": "success", "summary": summary})
     except Exception as e:
         return jsonify({"error": f"復元に失敗しました: {str(e)}"}), 500
 
 
 # ============================
-#  Export API
+#  Export API (user-scoped)
 # ============================
 @app.route('/api/export/journal', methods=['GET'])
 def api_export_journal():
     """Export journal entries as CSV or JSON."""
+    uid = get_user_id()
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     fmt = request.args.get('format', 'json')
-    entries = models.get_journal_export(start_date, end_date)
+    entries = models.get_journal_export(start_date, end_date, user_id=uid)
 
     if fmt == 'csv':
         import csv
@@ -829,21 +921,23 @@ def api_export_journal():
 @app.route('/api/export/trial-balance', methods=['GET'])
 def api_export_trial_balance():
     """Export trial balance data."""
+    uid = get_user_id()
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
-    balances = models.get_trial_balance(start_date, end_date)
+    balances = models.get_trial_balance(start_date, end_date, user_id=uid)
     return jsonify({"balances": balances})
 
 
 @app.route('/api/export/ledger', methods=['GET'])
 def api_export_ledger():
     """Export general ledger for all accounts."""
+    uid = get_user_id()
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     account_list = models.get_accounts()
     result = []
     for acct in account_list:
-        ledger = models.get_ledger_entries(acct['id'], start_date, end_date)
+        ledger = models.get_ledger_entries(acct['id'], start_date, end_date, user_id=uid)
         if ledger.get('entries'):
             result.append({
                 'account_code': acct['code'],
