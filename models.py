@@ -309,7 +309,8 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
     """
     Get trial balance grouped by account.
     Returns list of dicts with: account_id, code, name, account_type,
-    opening_balance, debit_total, credit_total, closing_balance
+    opening_balance, debit_total, credit_total, closing_balance,
+    carry_forward (前月繰越 = 期首残高 + start_date以前の仕訳累計)
     """
     conn = get_db()
     try:
@@ -318,7 +319,7 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
             "SELECT id, code, name, account_type, display_order FROM accounts_master WHERE is_active = 1 ORDER BY display_order, code"
         ).fetchall()
 
-        # Build date conditions for journal entries
+        # Build date conditions for journal entries (within period)
         date_conditions = ["je.is_deleted = 0"]
         date_params = []
         if start_date:
@@ -329,7 +330,7 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
             date_params.append(end_date)
         date_where = " AND ".join(date_conditions)
 
-        # Debit totals per account
+        # Debit totals per account (within period)
         debit_sql = f"""
         SELECT debit_account_id AS account_id, SUM(amount) AS total
         FROM journal_entries je WHERE {date_where}
@@ -337,7 +338,7 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
         """
         debit_totals = {row['account_id']: row['total'] for row in conn.execute(debit_sql, date_params).fetchall()}
 
-        # Credit totals per account
+        # Credit totals per account (within period)
         credit_sql = f"""
         SELECT credit_account_id AS account_id, SUM(amount) AS total
         FROM journal_entries je WHERE {date_where}
@@ -345,10 +346,28 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
         """
         credit_totals = {row['account_id']: row['total'] for row in conn.execute(credit_sql, date_params).fetchall()}
 
-        # Opening balances (fiscal year derived from start_date or current year)
+        # Opening balances (fiscal year)
         fiscal_year = start_date[:4] if start_date else "2025"
         opening_sql = "SELECT account_id, amount FROM opening_balances WHERE fiscal_year = ?"
         openings = {row['account_id']: row['amount'] for row in conn.execute(opening_sql, (fiscal_year,)).fetchall()}
+
+        # Carry-forward: transactions BEFORE start_date (for monthly view)
+        cf_debit = {}
+        cf_credit = {}
+        if start_date:
+            cf_cond = "je.is_deleted = 0 AND je.entry_date < ?"
+            cf_params = [start_date]
+            # Also filter by fiscal year start (Jan 1 of same year)
+            fy_start = fiscal_year + "-01-01"
+            if start_date > fy_start:
+                cf_cond += " AND je.entry_date >= ?"
+                cf_params.append(fy_start)
+
+            cf_debit_sql = f"SELECT debit_account_id AS account_id, SUM(amount) AS total FROM journal_entries je WHERE {cf_cond} GROUP BY debit_account_id"
+            cf_debit = {row['account_id']: row['total'] for row in conn.execute(cf_debit_sql, cf_params).fetchall()}
+
+            cf_credit_sql = f"SELECT credit_account_id AS account_id, SUM(amount) AS total FROM journal_entries je WHERE {cf_cond} GROUP BY credit_account_id"
+            cf_credit = {row['account_id']: row['total'] for row in conn.execute(cf_credit_sql, cf_params).fetchall()}
 
         # Build result
         result = []
@@ -359,21 +378,23 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
             debit = debit_totals.get(aid, 0)
             credit = credit_totals.get(aid, 0)
 
-            # Closing balance calculation depends on account type
-            # 資産・費用: Opening + Debit - Credit
-            # 負債・純資産・収益: Opening + Credit - Debit
+            # Carry-forward = opening + transactions before start_date
+            cf_d = cf_debit.get(aid, 0)
+            cf_c = cf_credit.get(aid, 0)
             if atype in ('資産', '費用'):
-                closing = opening + debit - credit
+                carry_forward = opening + cf_d - cf_c
+                closing = carry_forward + debit - credit
             else:
-                closing = opening + credit - debit
+                carry_forward = opening + cf_c - cf_d
+                closing = carry_forward + credit - debit
 
-            # Include ALL active accounts (show 0 balance for unused accounts)
             result.append({
                 "account_id": aid,
                 "code": acc['code'],
                 "name": acc['name'],
                 "account_type": atype,
                 "opening_balance": opening,
+                "carry_forward": carry_forward,
                 "debit_total": debit,
                 "credit_total": credit,
                 "closing_balance": closing,

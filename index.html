@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=7">
+    <link rel="stylesheet" href="style.css?v=8">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -244,26 +244,28 @@
             <section id="view-ledger" class="content-view">
                 <div class="card">
                     <h2 class="card-title">総勘定元帳</h2>
-                    <div class="sub-tab-nav" id="ledger-sub-nav">
-                        <button class="sub-tab-btn active" data-subtab="bs-assets">貸借対照表（資産）</button>
-                        <button class="sub-tab-btn" data-subtab="bs-liabilities">貸借対照表（負債・純資産）</button>
-                        <button class="sub-tab-btn" data-subtab="profit-loss">損益計算書</button>
-                    </div>
-                    <div class="period-presets" id="ledger-presets">
-                        <div class="preset-btns">
-                            <button class="preset-btn active" data-period="ytd">年初〜当日</button>
-                            <button class="preset-btn" data-period="year">年間</button>
-                            <button class="preset-btn" data-period="month">当月</button>
-                            <button class="preset-btn" data-period="prev-month">前月</button>
+                    <div class="ledger-header-row">
+                        <div class="sub-tab-nav" id="ledger-sub-nav">
+                            <button class="sub-tab-btn active" data-subtab="bs-assets">貸借対照表（資産）</button>
+                            <button class="sub-tab-btn" data-subtab="bs-liabilities">貸借対照表（負債・純資産）</button>
+                            <button class="sub-tab-btn" data-subtab="profit-loss">損益計算書</button>
                         </div>
-                        <select class="filter-input" id="ledger-year-select"></select>
-                        <div class="period-dates">
-                            <input type="date" id="ledger-start" class="filter-input">
-                            <span class="filter-sep">〜</span>
-                            <input type="date" id="ledger-end" class="filter-input">
-                            <button id="ledger-apply" class="btn btn-sm btn-primary">表示</button>
+                        <div class="period-nav" id="ledger-period-nav">
+                            <select class="period-select" id="ledger-period-mode">
+                                <option value="ytd">年初〜当日</option>
+                                <option value="year">年間</option>
+                                <option value="month" selected>当月</option>
+                            </select>
+                            <button class="period-arrow" id="period-prev" title="前へ">◀</button>
+                            <select class="period-select" id="ledger-year-select"></select>
+                            <select class="period-select" id="ledger-month-select"></select>
+                            <button class="period-arrow" id="period-next" title="次へ">▶</button>
                         </div>
                     </div>
+                    <div class="period-range-display" id="period-range-display"></div>
+                    <!-- hidden inputs for API -->
+                    <input type="hidden" id="ledger-start">
+                    <input type="hidden" id="ledger-end">
                     <div id="ledger-tab-bs-assets" class="ledger-sub-panel active">
                         <div id="bs-assets-content"></div>
                     </div>
@@ -470,7 +472,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=11"></script>
+    <script src="script.js?v=12"></script>
 </body>
 
 </html>

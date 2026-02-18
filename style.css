@@ -220,11 +220,19 @@ body {
 .content-view { display: none; }
 .content-view.active { display: block; }
 
-/* === Ledger Sub-tabs === */
+/* === Ledger Header Row (sub-tabs + period nav) === */
+.ledger-header-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
 .sub-tab-nav {
     display: flex;
     gap: 2px;
-    margin-bottom: 1rem;
     border-bottom: 2px solid var(--border);
 }
 .sub-tab-btn {
@@ -250,41 +258,50 @@ body {
 .ledger-sub-panel { display: none; }
 .ledger-sub-panel.active { display: block; }
 
-/* === Period Presets === */
-.period-presets {
+/* === Period Navigation (right side) === */
+.period-nav {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-}
-.preset-btns {
-    display: flex;
     gap: 4px;
 }
-.preset-btn {
-    padding: 0.375rem 0.75rem;
+.period-select {
+    padding: 0.375rem 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 5px;
     background: var(--bg-white);
-    color: var(--text-secondary);
+    color: var(--text);
     font-size: 0.75rem;
     font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.period-select:focus { outline: none; border-color: var(--primary); }
+.period-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-white);
+    color: var(--text-secondary);
+    font-size: 0.6875rem;
     cursor: pointer;
     font-family: inherit;
     transition: all 0.15s;
-    white-space: nowrap;
 }
-.preset-btn:hover { background: var(--bg); border-color: var(--text-dim); }
-.preset-btn.active {
+.period-arrow:hover {
     background: var(--primary);
     color: #fff;
     border-color: var(--primary);
 }
-.period-dates {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
+.period-range-display {
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+    text-align: right;
 }
 
 /* === Counterparty Form === */

@@ -803,23 +803,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const ledgerSubNav = document.getElementById('ledger-sub-nav');
     const ledgerStartInput = document.getElementById('ledger-start');
     const ledgerEndInput = document.getElementById('ledger-end');
-    const ledgerApplyBtn = document.getElementById('ledger-apply');
     const ledgerDetail = document.getElementById('ledger-detail');
     const ledgerDetailBack = document.getElementById('ledger-detail-back');
     const ledgerDetailTitle = document.getElementById('ledger-detail-title');
     const ledgerDetailContent = document.getElementById('ledger-detail-content');
     const ledgerYearSelect = document.getElementById('ledger-year-select');
-    const ledgerPresets = document.getElementById('ledger-presets');
+    const ledgerMonthSelect = document.getElementById('ledger-month-select');
+    const ledgerPeriodMode = document.getElementById('ledger-period-mode');
+    const periodPrevBtn = document.getElementById('period-prev');
+    const periodNextBtn = document.getElementById('period-next');
+    const periodRangeDisplay = document.getElementById('period-range-display');
 
     const bsAssetsContent = document.getElementById('bs-assets-content');
     const bsLiabilitiesContent = document.getElementById('bs-liabilities-content');
     const plContent = document.getElementById('pl-content');
 
     let currentLedgerSubTab = 'bs-assets';
-    let currentPreset = 'ytd';
+    let currentPeriodMode = 'month';  // 'ytd' | 'year' | 'month'
 
-    // --- Year selector population ---
+    // --- Year & Month selector population ---
     const thisYear = new Date().getFullYear();
+    const thisMonth = new Date().getMonth() + 1;
     for (let y = thisYear - 3; y <= thisYear + 1; y++) {
         const opt = document.createElement('option');
         opt.value = y;
@@ -827,93 +831,81 @@ document.addEventListener('DOMContentLoaded', () => {
         if (y === thisYear) opt.selected = true;
         ledgerYearSelect.appendChild(opt);
     }
-
-    // --- Period Preset Logic ---
-    function getSelectedYear() {
-        return parseInt(ledgerYearSelect.value) || thisYear;
+    for (let m = 1; m <= 12; m++) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m + '月';
+        if (m === thisMonth) opt.selected = true;
+        ledgerMonthSelect.appendChild(opt);
     }
 
-    function applyPreset(preset) {
-        currentPreset = preset;
-        const y = getSelectedYear();
-        const now = new Date();
-        const todayDate = todayStr();
+    function getSelectedYear() { return parseInt(ledgerYearSelect.value) || thisYear; }
+    function getSelectedMonth() { return parseInt(ledgerMonthSelect.value) || thisMonth; }
 
-        switch (preset) {
+    function isMonthlyMode() { return currentPeriodMode === 'month'; }
+
+    function updateMonthSelectVisibility() {
+        ledgerMonthSelect.style.display = (currentPeriodMode === 'month') ? '' : 'none';
+        periodPrevBtn.style.display = (currentPeriodMode === 'month') ? '' : 'none';
+        periodNextBtn.style.display = (currentPeriodMode === 'month') ? '' : 'none';
+    }
+
+    function applyPeriod() {
+        const y = getSelectedYear();
+        const m = getSelectedMonth();
+        const now = new Date();
+        switch (currentPeriodMode) {
             case 'ytd':
-                // Year-to-date: Jan 1 ~ today (or Dec 31 if viewing past year)
                 ledgerStartInput.value = `${y}-01-01`;
-                ledgerEndInput.value = (y === now.getFullYear()) ? todayDate : `${y}-12-31`;
+                ledgerEndInput.value = (y === now.getFullYear()) ? todayStr() : `${y}-12-31`;
                 break;
             case 'year':
-                // Full year: Jan 1 ~ Dec 31
                 ledgerStartInput.value = `${y}-01-01`;
                 ledgerEndInput.value = `${y}-12-31`;
                 break;
             case 'month': {
-                // Current month (of selected year)
-                const m = (y === now.getFullYear()) ? now.getMonth() + 1 : 1;
                 const mStr = String(m).padStart(2, '0');
                 const lastDay = new Date(y, m, 0).getDate();
                 ledgerStartInput.value = `${y}-${mStr}-01`;
                 ledgerEndInput.value = `${y}-${mStr}-${String(lastDay).padStart(2, '0')}`;
                 break;
             }
-            case 'prev-month': {
-                // Previous month
-                let pm, py;
-                if (y === now.getFullYear()) {
-                    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                    pm = d.getMonth() + 1;
-                    py = d.getFullYear();
-                } else {
-                    pm = 12;
-                    py = y;
-                }
-                const pmStr = String(pm).padStart(2, '0');
-                const lastDay = new Date(py, pm, 0).getDate();
-                ledgerStartInput.value = `${py}-${pmStr}-01`;
-                ledgerEndInput.value = `${py}-${pmStr}-${String(lastDay).padStart(2, '0')}`;
-                break;
-            }
         }
-
-        // Update preset button active states
-        ledgerPresets.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-        const activeBtn = ledgerPresets.querySelector(`[data-period="${preset}"]`);
-        if (activeBtn) activeBtn.classList.add('active');
+        // Update display
+        periodRangeDisplay.textContent = `${ledgerStartInput.value} 〜 ${ledgerEndInput.value}`;
+        updateMonthSelectVisibility();
     }
 
-    function setDefaultDatesForTab() {
-        const y = getSelectedYear();
-        if (currentLedgerSubTab === 'profit-loss') {
-            // P/L: Full year Jan 1 ~ Dec 31
-            applyPreset('year');
+    function movePeriod(delta) {
+        if (currentPeriodMode !== 'month') {
+            // Year-based: move year
+            ledgerYearSelect.value = getSelectedYear() + delta;
         } else {
-            // B/S: YTD Jan 1 ~ today
-            applyPreset('ytd');
+            // Month-based: move month
+            let m = getSelectedMonth() + delta;
+            let y = getSelectedYear();
+            if (m < 1) { m = 12; y--; }
+            if (m > 12) { m = 1; y++; }
+            ledgerYearSelect.value = y;
+            ledgerMonthSelect.value = m;
         }
+        applyPeriod();
+        loadCurrentLedgerSubTab();
     }
 
-    // Set initial dates
-    setDefaultDatesForTab();
+    // Initial setup
+    applyPeriod();
 
-    // Preset button click
-    ledgerPresets.addEventListener('click', (e) => {
-        const btn = e.target.closest('.preset-btn');
-        if (!btn) return;
-        const period = btn.dataset.period;
-        if (period) {
-            applyPreset(period);
-            loadCurrentLedgerSubTab();
-        }
-    });
-
-    // Year selector change
-    ledgerYearSelect.addEventListener('change', () => {
-        applyPreset(currentPreset);
+    // Event listeners
+    ledgerPeriodMode.addEventListener('change', () => {
+        currentPeriodMode = ledgerPeriodMode.value;
+        applyPeriod();
         loadCurrentLedgerSubTab();
     });
+    ledgerYearSelect.addEventListener('change', () => { applyPeriod(); loadCurrentLedgerSubTab(); });
+    ledgerMonthSelect.addEventListener('change', () => { applyPeriod(); loadCurrentLedgerSubTab(); });
+    periodPrevBtn.addEventListener('click', () => movePeriod(-1));
+    periodNextBtn.addEventListener('click', () => movePeriod(1));
 
     // Sub-tab switching
     ledgerSubNav.addEventListener('click', (e) => {
@@ -922,24 +914,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const subtab = btn.dataset.subtab;
         currentLedgerSubTab = subtab;
 
-        // Update button states
         ledgerSubNav.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
-        // Show/hide panels
         document.querySelectorAll('.ledger-sub-panel').forEach(p => p.classList.remove('active'));
         const panel = document.getElementById('ledger-tab-' + subtab);
         if (panel) panel.classList.add('active');
 
-        // Hide drill-down detail when switching tabs
         hideLedgerDetail();
-
-        // Set default period for this tab type, then load
-        setDefaultDatesForTab();
         loadCurrentLedgerSubTab();
     });
-
-    ledgerApplyBtn.addEventListener('click', loadCurrentLedgerSubTab);
 
     function loadCurrentLedgerSubTab() {
         if (currentLedgerSubTab === 'bs-assets') loadBSAssets();
@@ -1008,31 +992,52 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Helper: build a clickable account table with drill-down
     function buildAccountTable(items, showSectionTitle = '') {
+        const monthly = isMonthlyMode();
         let html = '';
         if (showSectionTitle) {
             html += `<div class="pl-section-title" style="margin:0.75rem 0 0.5rem;">${showSectionTitle}</div>`;
         }
-        html += `<table class="tb-table">
-            <thead><tr>
-                <th>コード</th>
-                <th>勘定科目</th>
-                <th class="text-right">期首残高</th>
-                <th class="text-right">借方合計</th>
-                <th class="text-right">貸方合計</th>
-                <th class="text-right">残高</th>
-            </tr></thead><tbody>`;
-
-        items.forEach(b => {
-            html += `<tr class="tb-row clickable" data-account-id="${b.account_id}" style="cursor:pointer;">
-                <td>${b.code}</td>
-                <td>${b.name}</td>
-                <td class="text-right">${fmt(b.opening_balance)}</td>
-                <td class="text-right">${fmt(b.debit_total)}</td>
-                <td class="text-right">${fmt(b.credit_total)}</td>
-                <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
-            </tr>`;
-        });
-
+        if (monthly) {
+            html += `<table class="tb-table">
+                <thead><tr>
+                    <th>コード</th>
+                    <th>勘定科目</th>
+                    <th class="text-right">前月繰越</th>
+                    <th class="text-right">当月借方</th>
+                    <th class="text-right">当月貸方</th>
+                    <th class="text-right">当月残高</th>
+                </tr></thead><tbody>`;
+            items.forEach(b => {
+                html += `<tr class="tb-row clickable" data-account-id="${b.account_id}" style="cursor:pointer;">
+                    <td>${b.code}</td>
+                    <td>${b.name}</td>
+                    <td class="text-right">${fmt(b.carry_forward)}</td>
+                    <td class="text-right">${fmt(b.debit_total)}</td>
+                    <td class="text-right">${fmt(b.credit_total)}</td>
+                    <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
+                </tr>`;
+            });
+        } else {
+            html += `<table class="tb-table">
+                <thead><tr>
+                    <th>コード</th>
+                    <th>勘定科目</th>
+                    <th class="text-right">期首残高</th>
+                    <th class="text-right">借方合計</th>
+                    <th class="text-right">貸方合計</th>
+                    <th class="text-right">残高</th>
+                </tr></thead><tbody>`;
+            items.forEach(b => {
+                html += `<tr class="tb-row clickable" data-account-id="${b.account_id}" style="cursor:pointer;">
+                    <td>${b.code}</td>
+                    <td>${b.name}</td>
+                    <td class="text-right">${fmt(b.opening_balance)}</td>
+                    <td class="text-right">${fmt(b.debit_total)}</td>
+                    <td class="text-right">${fmt(b.credit_total)}</td>
+                    <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
+                </tr>`;
+            });
+        }
         html += `</tbody></table>`;
         return html;
     }
