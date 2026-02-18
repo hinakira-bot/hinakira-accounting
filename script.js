@@ -67,12 +67,24 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleLogout() {
         if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
         const t = sessionStorage.getItem('access_token');
-        if (t) google.accounts.oauth2.revoke(t, () => {});
+        // Clear session first, then revoke (revoke can fail silently)
+        accessToken = null;
         sessionStorage.removeItem('access_token');
         sessionStorage.removeItem('token_expiration');
         sessionStorage.removeItem('user_email');
         sessionStorage.removeItem('user_name');
-        location.reload();
+        try {
+            if (t && typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
+                google.accounts.oauth2.revoke(t, () => { location.reload(); });
+                // Fallback reload in case revoke callback doesn't fire
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                location.reload();
+            }
+        } catch (e) {
+            console.warn('Logout revoke error:', e);
+            location.reload();
+        }
     }
     function scheduleTokenRefresh(expiresInSec) {
         if (refreshTimer) clearTimeout(refreshTimer);
@@ -502,8 +514,11 @@ document.addEventListener('DOMContentLoaded', () => {
             source: 'manual',
         };
 
+        console.log('Journal submit:', JSON.stringify(entry));
+
         if (!entry.debit_account || !entry.credit_account || !entry.amount) {
             showToast('借方科目・貸方科目・金額は必須です', true);
+            console.warn('Validation failed:', { debit: entry.debit_account, credit: entry.credit_account, amount: entry.amount });
             return;
         }
 
