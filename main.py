@@ -6,6 +6,7 @@ Multi-user support via Google OAuth user identification.
 import os
 import io
 import json
+import time
 import requests as http_requests
 from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
@@ -30,7 +31,12 @@ app = Flask(__name__, static_folder='.', static_url_path='/static')
 CORS(app)
 
 # Initialize database on startup (includes migration for existing DBs)
-db.init_db()
+try:
+    db.init_db()
+except Exception as e:
+    print(f"CRITICAL: Database initialization failed: {e}")
+    import traceback
+    traceback.print_exc()
 
 
 # ============================
@@ -52,7 +58,6 @@ def get_current_user():
     if not access_token:
         return None
 
-    import time
     now = time.time()
 
     # Check in-memory token cache first
