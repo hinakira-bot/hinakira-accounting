@@ -100,7 +100,7 @@ body {
 .app-main {
     flex: 1;
     padding: 1.25rem 1.5rem;
-    max-width: 1200px;
+    max-width: 1400px;
     width: 100%;
     margin: 0 auto;
 }
@@ -261,6 +261,136 @@ body {
     flex-direction: row;
     gap: 0.375rem;
 }
+
+/* === Journal Entry - TKC FX2 Style Table Input === */
+.je-card {
+    padding: 0;
+    overflow: hidden;
+}
+.je-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(135deg, #1e40af, #2563eb);
+    color: #fff;
+}
+.je-title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: #fff;
+    margin: 0;
+}
+
+/* AI Button */
+.btn-ai {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.875rem;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.btn-ai:hover { background: rgba(255,255,255,0.25); border-color: rgba(255,255,255,0.5); }
+.btn-ai:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ai svg { stroke: #fff; }
+
+/* Table wrapper */
+.je-table-wrap {
+    overflow-x: auto;
+}
+
+/* Input table */
+.je-input-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+.je-input-table .je-th {
+    text-align: left;
+    padding: 0.4375rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #1e40af;
+    background: #eff6ff;
+    border-bottom: 2px solid #bfdbfe;
+    border-right: 1px solid #dbeafe;
+    white-space: nowrap;
+}
+.je-input-table .je-th:last-child { border-right: none; }
+
+/* Input row */
+.je-input-row td {
+    padding: 0.25rem;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid #e2e8f0;
+    vertical-align: middle;
+    background: #fff;
+}
+.je-input-row td:last-child { border-right: none; }
+
+.je-input-row input,
+.je-input-row select {
+    width: 100%;
+    padding: 0.4375rem 0.5rem;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 0.8125rem;
+    color: var(--text);
+    background: #fff;
+    transition: all 0.12s;
+}
+.je-input-row input:focus,
+.je-input-row select:focus {
+    outline: none;
+    border-color: #2563eb;
+    background: #eff6ff;
+    box-shadow: 0 0 0 2px rgba(37,99,235,0.12);
+}
+.je-input-row input[type="number"] {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.je-input-row input[readonly] {
+    color: #2563eb;
+    font-weight: 600;
+    background: #f8fafc;
+    cursor: default;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+.je-input-row select {
+    cursor: pointer;
+}
+
+/* Submit button in table */
+.btn-je-submit {
+    display: block;
+    width: 100%;
+    padding: 0.4375rem 0.5rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+.btn-je-submit:hover { background: #1d4ed8; }
+.btn-je-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* === Tables === */
 .table-wrap { overflow-x: auto; }

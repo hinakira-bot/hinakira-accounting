@@ -113,7 +113,7 @@ def analyze_document(file_bytes: bytes, mime_type: str, history: list = None) ->
 
 
 def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api_key: str) -> list:
-    """Predict debit/credit accounts for entries using AI."""
+    """Predict debit/credit accounts, tax category, and tax rate for entries using AI."""
     configure_gemini(gemini_api_key)
 
     history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
@@ -121,29 +121,44 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
 
     input_text = ""
     for item in data:
-        line = f"ID:{item['index']} 取引先:{item.get('counterparty', '')} 摘要:{item.get('memo', '')}"
+        line = f"ID:{item['index']} 取引先:{item.get('counterparty', '')} 摘要:{item.get('memo', '')} 金額:{item.get('amount', '')}"
         if item.get('debit'):
             line += f" 【借方(固定):{item['debit']}】"
         if item.get('credit'):
             line += f" 【貸方(固定):{item['credit']}】"
+        if item.get('tax_category'):
+            line += f" 【課税区分(固定):{item['tax_category']}】"
+        if item.get('tax_rate'):
+            line += f" 【税率(固定):{item['tax_rate']}】"
         input_text += line + "\n"
 
     prompt = f"""
     あなたは優秀な日本の公認会計士です。
-    以下の「取引先」と「摘要」の情報から、最も適切な「借方勘定科目」と「貸方勘定科目」を推論してください。
+    以下の「取引先」と「摘要」の情報から、最も適切な仕訳情報を推論してください。
 
     【使用可能な勘定科目リスト】
     {valid_accounts_str}
 
     【重要：固定指定の厳守】
-    入力データに【借方(固定):...】や【貸方(固定):...】と書かれている場合は、ユーザーが既に決定した確定事項です。
-    **絶対に**その値を変更せず、そのまま出力に含めてください。
-    空欄になっている側（相方）のみを推論して埋めてください。
+    入力データに【借方(固定):...】【貸方(固定):...】【課税区分(固定):...】【税率(固定):...】と書かれている場合は、
+    ユーザーが既に決定した確定事項です。**絶対に**その値を変更せず、そのまま出力に含めてください。
+    空欄になっている項目のみを推論して埋めてください。
 
     【推論ルール】
     1. **過去の学習データ**と同じ取引先があれば、その科目を優先してください。
     2. 一般的な会計知識に基づいて推測してください。
     3. クレジットカード払いや後払いの場合は、貸方を「未払金」とします（ただし固定指定がある場合は指定を優先）。
+
+    【課税区分の判定ルール】
+    - 通常の経費（消耗品、交通費、外注費等の購入）→「課税仕入」
+    - 売上や収入 →「課税売上」
+    - 給与・社会保険料・保険料・地代（土地） →「非課税」
+    - 預金移動・借入返済・事業主貸/借・租税公課 →「不課税」
+
+    【税率の判定ルール】
+    - 飲食料品（テイクアウト・食料品購入）→「8%」（軽減税率）
+    - それ以外の課税取引 →「10%」（標準税率）
+    - 非課税・不課税 →「0%」
 
     【過去の学習データ】
     {history_str}
@@ -153,7 +168,7 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
 
     【出力フォーマット (JSON)】
     [
-      {{"index": ID(数値), "debit": "借方科目", "credit": "貸方科目"}},
+      {{"index": ID(数値), "debit": "借方科目", "credit": "貸方科目", "tax_category": "課税仕入 or 課税売上 or 非課税 or 不課税", "tax_rate": "10% or 8% or 0%"}},
       ...
     ]
     """
@@ -173,6 +188,10 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
                     pred['debit'] = original['debit']
                 if original.get('credit') and str(original['credit']).strip():
                     pred['credit'] = original['credit']
+                if original.get('tax_category') and str(original['tax_category']).strip():
+                    pred['tax_category'] = original['tax_category']
+                if original.get('tax_rate') and str(original['tax_rate']).strip():
+                    pred['tax_rate'] = original['tax_rate']
 
         return predictions
     except Exception as e:

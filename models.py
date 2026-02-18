@@ -345,6 +345,22 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
         conn.close()
 
 
+# --- Counterparties ---
+def get_counterparties(limit=200) -> list:
+    """Get distinct counterparty names from recent journal entries."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+        SELECT DISTINCT counterparty FROM journal_entries
+        WHERE is_deleted = 0 AND counterparty != ''
+        ORDER BY counterparty
+        LIMIT ?
+        """, (limit,)).fetchall()
+        return [r['counterparty'] for r in rows]
+    finally:
+        conn.close()
+
+
 # --- History for AI (replaces Sheets-based history) ---
 def get_accounting_history(limit=200) -> list:
     """Get recent journal entries for AI context (counterparty + memo + debit account)."""

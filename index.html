@@ -38,53 +38,61 @@
 
             <!-- Tab 1: 仕訳入力 -->
             <section id="tab-journal-input" class="tab-panel active">
-                <div class="card">
-                    <h2 class="card-title">仕訳入力</h2>
-                    <form id="journal-form" class="journal-form">
-                        <div class="form-row">
-                            <div class="form-group" style="flex:0 0 140px;">
-                                <label for="je-date">日付</label>
-                                <input type="date" id="je-date" required>
-                            </div>
-                            <div class="form-group" style="flex:1;">
-                                <label for="je-debit">借方科目</label>
-                                <input type="text" id="je-debit" list="account-list" placeholder="旅費交通費" required autocomplete="off">
-                            </div>
-                            <div class="form-group" style="flex:1;">
-                                <label for="je-credit">貸方科目</label>
-                                <input type="text" id="je-credit" list="account-list" placeholder="未払金" required autocomplete="off">
-                            </div>
-                            <div class="form-group" style="flex:0 0 130px;">
-                                <label for="je-amount">金額(税込)</label>
-                                <input type="number" id="je-amount" placeholder="1100" min="0" required>
-                            </div>
-                            <div class="form-group" style="flex:0 0 110px;">
-                                <label for="je-tax">税区分</label>
-                                <select id="je-tax">
-                                    <option value="10%">10% 標準</option>
-                                    <option value="8%">8% 軽減</option>
-                                    <option value="非課税">非課税</option>
-                                    <option value="不課税">不課税</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group" style="flex:1;">
-                                <label for="je-counterparty">取引先</label>
-                                <input type="text" id="je-counterparty" placeholder="JR東日本">
-                            </div>
-                            <div class="form-group" style="flex:2;">
-                                <label for="je-memo">摘要</label>
-                                <input type="text" id="je-memo" placeholder="交通費 東京〜横浜">
-                            </div>
-                            <div class="form-group form-group-info">
-                                <label>消費税(参考)</label>
-                                <span id="je-tax-display" class="tax-display">0 円</span>
-                            </div>
-                            <div class="form-group form-group-actions">
-                                <button type="submit" class="btn btn-primary">登録</button>
-                                <button type="reset" class="btn btn-ghost">クリア</button>
-                            </div>
+                <div class="card je-card">
+                    <div class="je-header">
+                        <h2 class="je-title">仕訳入力</h2>
+                        <button type="button" id="je-ai-btn" class="btn btn-ai" title="AI自動判定">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                            AI自動判定
+                        </button>
+                    </div>
+                    <form id="journal-form">
+                        <div class="je-table-wrap">
+                            <table class="je-input-table">
+                                <thead>
+                                    <tr>
+                                        <th class="je-th" style="width:120px;">日付</th>
+                                        <th class="je-th" style="width:100px;">課税区分</th>
+                                        <th class="je-th" style="min-width:120px;">借方</th>
+                                        <th class="je-th" style="min-width:120px;">貸方</th>
+                                        <th class="je-th" style="width:110px;">税込金額</th>
+                                        <th class="je-th" style="width:100px;">税抜金額</th>
+                                        <th class="je-th" style="min-width:110px;">取引先</th>
+                                        <th class="je-th" style="min-width:140px;">元帳摘要</th>
+                                        <th class="je-th" style="width:80px;">税率</th>
+                                        <th class="je-th" style="width:60px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="je-input-row">
+                                        <td><input type="date" id="je-date" required></td>
+                                        <td>
+                                            <select id="je-tax-category">
+                                                <option value="">（AI判定）</option>
+                                                <option value="課税仕入">課税仕入</option>
+                                                <option value="課税売上">課税売上</option>
+                                                <option value="非課税">非課税</option>
+                                                <option value="不課税">不課税</option>
+                                            </select>
+                                        </td>
+                                        <td><input type="text" id="je-debit" list="account-list" placeholder="旅費交通費" autocomplete="off"></td>
+                                        <td><input type="text" id="je-credit" list="account-list" placeholder="未払金" autocomplete="off"></td>
+                                        <td><input type="number" id="je-amount" placeholder="1,100" min="0" required></td>
+                                        <td><input type="text" id="je-net-amount" readonly tabindex="-1" placeholder="0"></td>
+                                        <td><input type="text" id="je-counterparty" list="counterparty-list" placeholder="JR東日本" autocomplete="off"></td>
+                                        <td><input type="text" id="je-memo" placeholder="東京→横浜"></td>
+                                        <td>
+                                            <select id="je-tax-rate">
+                                                <option value="">（AI）</option>
+                                                <option value="10%">10%</option>
+                                                <option value="8%">8%</option>
+                                                <option value="0%">0%</option>
+                                            </select>
+                                        </td>
+                                        <td><button type="submit" class="btn-je-submit" title="登録">登録</button></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </form>
                 </div>
@@ -96,12 +104,14 @@
                             <thead>
                                 <tr>
                                     <th>日付</th>
+                                    <th>課税区分</th>
                                     <th>借方</th>
                                     <th>貸方</th>
-                                    <th class="text-right">金額</th>
-                                    <th>税区分</th>
+                                    <th class="text-right">税込金額</th>
+                                    <th class="text-right">税抜金額</th>
                                     <th>取引先</th>
-                                    <th>摘要</th>
+                                    <th>元帳摘要</th>
+                                    <th>税率</th>
                                 </tr>
                             </thead>
                             <tbody id="recent-tbody"></tbody>
@@ -109,6 +119,7 @@
                     </div>
                 </div>
                 <datalist id="account-list"></datalist>
+                <datalist id="counterparty-list"></datalist>
             </section>
 
             <!-- Tab 2: 証憑読み取り -->

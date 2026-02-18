@@ -67,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!apiKey) openSettings();
         loadAccounts();
         loadRecentEntries();
+        loadCounterparties();
     }
 
     authBtn.onclick = handleLogin;
@@ -203,56 +204,182 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    //  Section 7: Tab 1 — 仕訳入力 (Journal Entry)
+    //  Section 7: Tab 1 — 仕訳入力 (Journal Entry) [TKC FX2 Style]
     // ============================================================
     const journalForm = document.getElementById('journal-form');
     const jeDate = document.getElementById('je-date');
+    const jeTaxCategory = document.getElementById('je-tax-category');
     const jeDebit = document.getElementById('je-debit');
     const jeCredit = document.getElementById('je-credit');
     const jeAmount = document.getElementById('je-amount');
-    const jeTax = document.getElementById('je-tax');
+    const jeNetAmount = document.getElementById('je-net-amount');
     const jeCounterparty = document.getElementById('je-counterparty');
     const jeMemo = document.getElementById('je-memo');
-    const jeTaxDisplay = document.getElementById('je-tax-display');
+    const jeTaxRate = document.getElementById('je-tax-rate');
+    const jeAiBtn = document.getElementById('je-ai-btn');
 
     // Default date to today
     jeDate.value = todayStr();
 
-    // Tax auto-calculation
-    function updateTaxDisplay() {
+    // --- Tax-exclusive amount auto-calculation ---
+    function updateNetAmount() {
         const amt = parseInt(jeAmount.value) || 0;
-        const cls = jeTax.value;
-        const tax = calcTax(amt, cls);
-        jeTaxDisplay.textContent = fmt(tax) + ' 円';
+        const rate = jeTaxRate.value;   // "10%", "8%", "0%", or ""
+        if (!amt) { jeNetAmount.value = ''; return; }
+        let tax = 0;
+        if (rate === '10%') tax = Math.floor(amt * 10 / 110);
+        else if (rate === '8%') tax = Math.floor(amt * 8 / 108);
+        jeNetAmount.value = fmt(amt - tax);
     }
-    jeAmount.addEventListener('input', updateTaxDisplay);
-    jeTax.addEventListener('change', updateTaxDisplay);
+    jeAmount.addEventListener('input', updateNetAmount);
+    jeTaxRate.addEventListener('change', updateNetAmount);
 
-    // Form submit
+    // --- Tax category ↔ Tax rate linkage ---
+    jeTaxCategory.addEventListener('change', () => {
+        const cat = jeTaxCategory.value;
+        if (cat === '非課税' || cat === '不課税') {
+            jeTaxRate.value = '0%';
+            updateNetAmount();
+        }
+        // If switching to 課税 and rate is 0%, reset to blank for AI
+        if ((cat === '課税仕入' || cat === '課税売上') && jeTaxRate.value === '0%') {
+            jeTaxRate.value = '';
+            updateNetAmount();
+        }
+    });
+
+    jeTaxRate.addEventListener('change', () => {
+        const rate = jeTaxRate.value;
+        const cat = jeTaxCategory.value;
+        // If rate is 0% and category is taxable, auto-set to 非課税
+        if (rate === '0%' && (cat === '課税仕入' || cat === '課税売上' || cat === '')) {
+            // Don't auto-change, just update net amount
+        }
+        updateNetAmount();
+    });
+
+    // --- Counterparty autocomplete ---
+    function loadCounterparties() {
+        fetchAPI('/api/counterparties').then(data => {
+            const dl = document.getElementById('counterparty-list');
+            if (!dl) return;
+            dl.innerHTML = (data.counterparties || []).map(c => `<option value="${c}">`).join('');
+        });
+    }
+
+    // --- Resolve tax_classification for DB storage ---
+    // Maps (tax_category, tax_rate) → DB tax_classification value
+    function resolveTaxClassification(taxCategory, taxRate) {
+        if (taxCategory === '非課税') return '非課税';
+        if (taxCategory === '不課税') return '不課税';
+        // For 課税仕入/課税売上 or blank, use the tax rate
+        if (taxRate === '10%') return '10%';
+        if (taxRate === '8%') return '8%';
+        // Default
+        return '10%';
+    }
+
+    // --- Reverse: DB tax_classification → display (tax_category, tax_rate) ---
+    function parseTaxClassification(dbValue) {
+        if (dbValue === '非課税') return { taxCategory: '非課税', taxRate: '0%' };
+        if (dbValue === '不課税') return { taxCategory: '不課税', taxRate: '0%' };
+        if (dbValue === '8%') return { taxCategory: '課税仕入', taxRate: '8%' };
+        if (dbValue === '10%') return { taxCategory: '課税仕入', taxRate: '10%' };
+        return { taxCategory: '', taxRate: '' };
+    }
+
+    // --- AI Auto-Detect Button ---
+    jeAiBtn.addEventListener('click', async () => {
+        const apiKey = localStorage.getItem('gemini_api_key');
+        if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
+
+        const amount = parseInt(jeAmount.value) || 0;
+        const counterparty = jeCounterparty.value.trim();
+        const memo = jeMemo.value.trim();
+        if (!counterparty && !memo && !amount) {
+            showToast('取引先・摘要・金額のいずれかを入力してください', true);
+            return;
+        }
+
+        // Build prediction request: send only user-filled fields as fixed
+        const predData = [{
+            index: 0,
+            counterparty: counterparty,
+            memo: memo,
+            amount: amount,
+            debit: jeDebit.value.trim() || '',
+            credit: jeCredit.value.trim() || '',
+            tax_category: jeTaxCategory.value || '',
+            tax_rate: jeTaxRate.value || '',
+        }];
+
+        jeAiBtn.disabled = true;
+        jeAiBtn.textContent = 'AI判定中...';
+
+        try {
+            const predictions = await fetchAPI('/api/predict', 'POST', {
+                data: predData,
+                gemini_api_key: apiKey,
+            });
+
+            if (predictions.error) throw new Error(predictions.error);
+            if (Array.isArray(predictions) && predictions.length > 0) {
+                const p = predictions[0];
+                // Only fill empty fields
+                if (!jeDebit.value.trim() && p.debit) jeDebit.value = p.debit;
+                if (!jeCredit.value.trim() && p.credit) jeCredit.value = p.credit;
+                if (!jeTaxCategory.value && p.tax_category) jeTaxCategory.value = p.tax_category;
+                if (!jeTaxRate.value && p.tax_rate) jeTaxRate.value = p.tax_rate;
+                // Sync linkage: if category is 非課税/不課税, force rate to 0%
+                if (jeTaxCategory.value === '非課税' || jeTaxCategory.value === '不課税') {
+                    jeTaxRate.value = '0%';
+                }
+                updateNetAmount();
+                showToast('AI判定が完了しました');
+            } else {
+                showToast('AI判定結果が空です', true);
+            }
+        } catch (err) {
+            showToast('AI判定エラー: ' + err.message, true);
+        } finally {
+            jeAiBtn.disabled = false;
+            jeAiBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> AI自動判定`;
+        }
+    });
+
+    // --- Form Submit ---
     journalForm.addEventListener('submit', async (e) => {
         e.preventDefault();
+        const amount = parseInt(jeAmount.value) || 0;
+        const taxCategory = jeTaxCategory.value;
+        const taxRate = jeTaxRate.value;
+        const taxClassification = resolveTaxClassification(taxCategory, taxRate);
+
         const entry = {
             entry_date: jeDate.value,
             debit_account: jeDebit.value.trim(),
             credit_account: jeCredit.value.trim(),
-            amount: parseInt(jeAmount.value) || 0,
-            tax_classification: jeTax.value,
+            amount: amount,
+            tax_classification: taxClassification,
             counterparty: jeCounterparty.value.trim(),
             memo: jeMemo.value.trim(),
             source: 'manual',
         };
+
         if (!entry.debit_account || !entry.credit_account || !entry.amount) {
             showToast('借方科目・貸方科目・金額は必須です', true);
             return;
         }
+
         try {
             const res = await fetchAPI('/api/journal', 'POST', entry);
             if (res.status === 'success') {
                 showToast('仕訳を登録しました');
                 journalForm.reset();
                 jeDate.value = todayStr();
-                jeTaxDisplay.textContent = '0 円';
+                jeNetAmount.value = '';
                 loadRecentEntries();
+                loadCounterparties(); // refresh counterparty suggestions
             } else {
                 showToast('登録に失敗しました: ' + (res.error || ''), true);
             }
@@ -261,22 +388,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Recent entries below form
+    // --- Recent Entries (below form) ---
     function loadRecentEntries() {
         fetchAPI('/api/journal/recent?limit=5').then(data => {
             const tbody = document.getElementById('recent-tbody');
             if (!tbody) return;
-            tbody.innerHTML = (data.entries || []).map(e => `
+            tbody.innerHTML = (data.entries || []).map(e => {
+                const parsed = parseTaxClassification(e.tax_classification);
+                const amt = parseInt(e.amount) || 0;
+                let tax = 0;
+                if (e.tax_classification === '10%') tax = Math.floor(amt * 10 / 110);
+                else if (e.tax_classification === '8%') tax = Math.floor(amt * 8 / 108);
+                const net = amt - tax;
+                return `
                 <tr>
                     <td>${e.entry_date || ''}</td>
+                    <td>${parsed.taxCategory || ''}</td>
                     <td>${e.debit_account || ''}</td>
                     <td>${e.credit_account || ''}</td>
                     <td class="text-right">${fmt(e.amount)}</td>
-                    <td>${e.tax_classification || ''}</td>
+                    <td class="text-right">${fmt(net)}</td>
                     <td>${e.counterparty || ''}</td>
                     <td>${e.memo || ''}</td>
-                </tr>
-            `).join('');
+                    <td>${parsed.taxRate || ''}</td>
+                </tr>`;
+            }).join('');
         });
     }
 

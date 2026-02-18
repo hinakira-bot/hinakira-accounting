@@ -262,6 +262,16 @@ def api_settings_update():
 
 
 # ============================
+#  Counterparties API
+# ============================
+@app.route('/api/counterparties', methods=['GET'])
+def api_counterparties():
+    """Get distinct counterparty names for autocomplete."""
+    counterparties = models.get_counterparties()
+    return jsonify({"counterparties": counterparties})
+
+
+# ============================
 #  Static File Routes (MUST be last to avoid intercepting API routes)
 # ============================
 @app.route('/')
