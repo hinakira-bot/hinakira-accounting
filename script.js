@@ -178,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
     //  Section 6: Shared Utilities
     // ============================================================
     async function fetchAPI(url, method = 'GET', body = null) {
-        const opts = { method, headers: {} };
+        const opts = { method, headers: {}, cache: 'no-store' };
         if (body && !(body instanceof FormData)) {
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
@@ -1199,14 +1199,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function loadCurrentLedgerSubTab() {
-        // If drill-down detail is open, refresh it with new period
-        if (currentDrillAccountId && !ledgerDetail.classList.contains('hidden')) {
-            showAccountDetail(currentDrillAccountId);
-            return;
-        }
+        // Always reload the sub-tab list
         if (currentLedgerSubTab === 'bs-assets') loadBSAssets();
         else if (currentLedgerSubTab === 'bs-liabilities') loadBSLiabilities();
         else if (currentLedgerSubTab === 'profit-loss') loadProfitLoss();
+
+        // If drill-down detail is open, also refresh it with new period
+        if (currentDrillAccountId && !ledgerDetail.classList.contains('hidden')) {
+            showAccountDetail(currentDrillAccountId);
+        }
     }
 
     function hideLedgerDetail() {
