@@ -67,24 +67,30 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleLogout() {
         if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
         const t = sessionStorage.getItem('access_token');
-        // Clear session first, then revoke (revoke can fail silently)
+        // Clear session first
         accessToken = null;
+        isLoggingOut = false;
         sessionStorage.removeItem('access_token');
         sessionStorage.removeItem('token_expiration');
         sessionStorage.removeItem('user_email');
         sessionStorage.removeItem('user_name');
+        // Revoke token silently (don't wait for callback)
         try {
             if (t && typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
-                google.accounts.oauth2.revoke(t, () => { location.reload(); });
-                // Fallback reload in case revoke callback doesn't fire
-                setTimeout(() => location.reload(), 2000);
-            } else {
-                location.reload();
+                google.accounts.oauth2.revoke(t, () => {});
             }
-        } catch (e) {
-            console.warn('Logout revoke error:', e);
-            location.reload();
-        }
+        } catch (e) { /* ignore */ }
+        // Show login overlay without page reload (avoids 502 if server is restarting)
+        loginOverlay.classList.remove('hidden');
+        authBtn.textContent = 'Googleでログイン';
+        authBtn.onclick = handleLogin;
+        settingsBtn.style.display = 'none';
+        const userDisplay = document.getElementById('user-display');
+        if (userDisplay) { userDisplay.textContent = ''; userDisplay.classList.add('hidden'); }
+        // Clear displayed data
+        const recentTbody = document.getElementById('recent-tbody');
+        if (recentTbody) recentTbody.innerHTML = '';
+        showToast('ログアウトしました');
     }
     function scheduleTokenRefresh(expiresInSec) {
         if (refreshTimer) clearTimeout(refreshTimer);
