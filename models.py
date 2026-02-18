@@ -345,18 +345,226 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
         conn.close()
 
 
-# --- Counterparties ---
-def get_counterparties(limit=200) -> list:
-    """Get distinct counterparty names from recent journal entries."""
+# --- Counterparties (Full CRUD) ---
+def get_counterparty_names() -> list:
+    """Get counterparty names for autocomplete (union of table + journal entries)."""
     conn = get_db()
     try:
         rows = conn.execute("""
-        SELECT DISTINCT counterparty FROM journal_entries
-        WHERE is_deleted = 0 AND counterparty != ''
-        ORDER BY counterparty
-        LIMIT ?
-        """, (limit,)).fetchall()
-        return [r['counterparty'] for r in rows]
+        SELECT name FROM counterparties WHERE is_active = 1
+        UNION
+        SELECT DISTINCT counterparty FROM journal_entries WHERE is_deleted = 0 AND counterparty != ''
+        ORDER BY name
+        """).fetchall()
+        return [r['name'] for r in rows]
+    finally:
+        conn.close()
+
+
+def get_counterparties_list() -> list:
+    """Get all counterparties with full details."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, code, contact_info, notes, is_active FROM counterparties WHERE is_active = 1 ORDER BY name"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def create_counterparty(data: dict) -> int:
+    """Create a new counterparty. Returns new ID."""
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO counterparties (name, code, contact_info, notes) VALUES (?, ?, ?, ?)",
+            (data.get('name', ''), data.get('code', ''), data.get('contact_info', ''), data.get('notes', ''))
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+
+def update_counterparty(cp_id: int, data: dict) -> bool:
+    """Update a counterparty."""
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE counterparties SET name=?, code=?, contact_info=?, notes=?, updated_at=datetime('now') WHERE id=?",
+            (data.get('name', ''), data.get('code', ''), data.get('contact_info', ''), data.get('notes', ''), cp_id)
+        )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def delete_counterparty(cp_id: int) -> bool:
+    """Soft-delete a counterparty."""
+    conn = get_db()
+    try:
+        conn.execute("UPDATE counterparties SET is_active=0, updated_at=datetime('now') WHERE id=?", (cp_id,))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+# --- Opening Balances ---
+def get_opening_balances(fiscal_year: str) -> list:
+    """Get opening balances for a fiscal year, joined with all active accounts."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+        SELECT am.id AS account_id, am.code, am.name, am.account_type,
+               COALESCE(ob.amount, 0) AS amount, COALESCE(ob.note, '') AS note
+        FROM accounts_master am
+        LEFT JOIN opening_balances ob ON am.id = ob.account_id AND ob.fiscal_year = ?
+        WHERE am.is_active = 1
+        ORDER BY am.display_order, am.code
+        """, (fiscal_year,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def save_opening_balances(fiscal_year: str, balances: list) -> bool:
+    """Bulk upsert opening balances for a fiscal year."""
+    conn = get_db()
+    try:
+        for b in balances:
+            conn.execute("""
+            INSERT INTO opening_balances (fiscal_year, account_id, amount, note)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(fiscal_year, account_id) DO UPDATE SET amount=excluded.amount, note=excluded.note
+            """, (fiscal_year, b['account_id'], int(b.get('amount', 0)), b.get('note', '')))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+# --- General Ledger (per-account entries) ---
+def get_ledger_entries(account_id: int, start_date=None, end_date=None) -> dict:
+    """Get journal entries for a specific account with running balance."""
+    conn = get_db()
+    try:
+        account = conn.execute(
+            "SELECT id, code, name, account_type FROM accounts_master WHERE id = ?", (account_id,)
+        ).fetchone()
+        if not account:
+            return {"error": "Account not found"}
+        account = dict(account)
+        atype = account['account_type']
+
+        conditions = ["je.is_deleted = 0", "(je.debit_account_id = ? OR je.credit_account_id = ?)"]
+        params = [account_id, account_id]
+        if start_date:
+            conditions.append("je.entry_date >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("je.entry_date <= ?")
+            params.append(end_date)
+        where = " AND ".join(conditions)
+
+        rows = conn.execute(f"""
+        SELECT je.id, je.entry_date, je.amount, je.tax_classification,
+               je.counterparty, je.memo,
+               je.debit_account_id, je.credit_account_id,
+               da.name AS debit_account, ca.name AS credit_account
+        FROM journal_entries je
+        JOIN accounts_master da ON je.debit_account_id = da.id
+        JOIN accounts_master ca ON je.credit_account_id = ca.id
+        WHERE {where}
+        ORDER BY je.entry_date ASC, je.id ASC
+        """, params).fetchall()
+
+        # Get opening balance
+        fiscal_year = start_date[:4] if start_date else str(__import__('datetime').date.today().year)
+        ob_row = conn.execute(
+            "SELECT amount FROM opening_balances WHERE fiscal_year = ? AND account_id = ?",
+            (fiscal_year, account_id)
+        ).fetchone()
+        opening = ob_row['amount'] if ob_row else 0
+
+        # Build entries with running balance
+        entries = []
+        balance = opening
+        for r in rows:
+            r = dict(r)
+            debit_amount = r['amount'] if r['debit_account_id'] == account_id else 0
+            credit_amount = r['amount'] if r['credit_account_id'] == account_id else 0
+            if atype in ('資産', '費用'):
+                balance += debit_amount - credit_amount
+            else:
+                balance += credit_amount - debit_amount
+            r['debit_amount'] = debit_amount
+            r['credit_amount'] = credit_amount
+            r['balance'] = balance
+            entries.append(r)
+
+        return {"account": account, "opening_balance": opening, "entries": entries}
+    finally:
+        conn.close()
+
+
+# --- Backup ---
+def get_full_backup() -> dict:
+    """Export all data as a JSON structure."""
+    conn = get_db()
+    try:
+        result = {}
+        for table in ['accounts_master', 'journal_entries', 'opening_balances', 'counterparties', 'settings']:
+            try:
+                rows = conn.execute(f"SELECT * FROM {table}").fetchall()
+                result[table] = [dict(r) for r in rows]
+            except Exception:
+                result[table] = []
+        return result
+    finally:
+        conn.close()
+
+
+# --- Export ---
+def get_journal_export(start_date=None, end_date=None) -> list:
+    """Get all journal entries for export (no pagination)."""
+    conn = get_db()
+    try:
+        conditions = ["je.is_deleted = 0"]
+        params = []
+        if start_date:
+            conditions.append("je.entry_date >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("je.entry_date <= ?")
+            params.append(end_date)
+        where = " AND ".join(conditions)
+        rows = conn.execute(f"""
+        SELECT je.entry_date, da.code AS debit_code, da.name AS debit_account,
+               ca.code AS credit_code, ca.name AS credit_account,
+               je.amount, je.tax_classification, je.tax_amount,
+               je.counterparty, je.memo
+        FROM journal_entries je
+        JOIN accounts_master da ON je.debit_account_id = da.id
+        JOIN accounts_master ca ON je.credit_account_id = ca.id
+        WHERE {where}
+        ORDER BY je.entry_date ASC, je.id ASC
+        """, params).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

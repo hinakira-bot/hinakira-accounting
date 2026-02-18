@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 複式簿記くん</title>
+    <title>Hinakira会計</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,16 +17,12 @@
         <!-- Header -->
         <header class="app-header">
             <div class="header-left">
-                <div class="logo">AI <span>複式簿記くん</span></div>
+                <button id="back-to-menu" class="btn-back hidden" title="メニューに戻る">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+                    メニュー
+                </button>
+                <div class="logo" id="logo-title"><span>Hinakira</span>会計</div>
             </div>
-            <nav class="tab-nav" id="tab-nav">
-                <button class="tab-btn active" data-tab="journal-input">仕訳入力</button>
-                <button class="tab-btn" data-tab="scan">証憑読み取り</button>
-                <button class="tab-btn" data-tab="journal-book">仕訳帳</button>
-                <button class="tab-btn" data-tab="trial-balance">残高一覧表</button>
-                <button class="tab-btn" data-tab="balance-sheet">貸借対照表</button>
-                <button class="tab-btn" data-tab="profit-loss">損益計算書</button>
-            </nav>
             <div class="header-right">
                 <button id="settings-btn" class="icon-btn" title="設定" style="display:none;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -38,8 +34,66 @@
         <!-- Main Content -->
         <main class="app-main">
 
-            <!-- Tab 1: 仕訳入力 -->
-            <section id="tab-journal-input" class="tab-panel active">
+            <!-- Menu Grid (Dashboard) -->
+            <section id="menu-grid" class="menu-grid-section active">
+                <div class="menu-grid-header">
+                    <h1 class="menu-grid-title"><span style="color:var(--primary);">Hinakira</span>会計</h1>
+                    <p class="menu-grid-subtitle">メニューを選択してください</p>
+                </div>
+                <div class="menu-grid">
+                    <button class="menu-tile" data-view="journal-input">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                        </div>
+                        <div class="menu-tile-label">仕訳入力</div>
+                    </button>
+                    <button class="menu-tile" data-view="scan">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        </div>
+                        <div class="menu-tile-label">証憑読み取り</div>
+                    </button>
+                    <button class="menu-tile" data-view="journal-book">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                        </div>
+                        <div class="menu-tile-label">仕訳帳</div>
+                    </button>
+                    <button class="menu-tile" data-view="ledger">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        </div>
+                        <div class="menu-tile-label">総勘定元帳</div>
+                    </button>
+                    <button class="menu-tile" data-view="counterparty">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        </div>
+                        <div class="menu-tile-label">取引先</div>
+                    </button>
+                    <button class="menu-tile" data-view="opening-balance">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/></svg>
+                        </div>
+                        <div class="menu-tile-label">期首残高設定</div>
+                    </button>
+                    <button class="menu-tile" data-view="backup">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                        </div>
+                        <div class="menu-tile-label">データのバックアップ</div>
+                    </button>
+                    <button class="menu-tile" data-view="output">
+                        <div class="menu-tile-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        </div>
+                        <div class="menu-tile-label">アウトプット</div>
+                    </button>
+                </div>
+            </section>
+
+            <!-- View 1: 仕訳入力 -->
+            <section id="view-journal-input" class="content-view">
                 <div class="card je-card">
                     <div class="je-header">
                         <h2 class="je-title">仕訳入力</h2>
@@ -98,22 +152,15 @@
                         </div>
                     </form>
                 </div>
-
                 <div class="card" id="recent-entries-card">
                     <h3 class="card-subtitle">直近の仕訳</h3>
                     <div class="table-wrap">
                         <table id="recent-table">
                             <thead>
                                 <tr>
-                                    <th>日付</th>
-                                    <th>課税区分</th>
-                                    <th>借方</th>
-                                    <th>貸方</th>
-                                    <th class="text-right">税込金額</th>
-                                    <th class="text-right">税抜金額</th>
-                                    <th>取引先</th>
-                                    <th>元帳摘要</th>
-                                    <th>税率</th>
+                                    <th>日付</th><th>課税区分</th><th>借方</th><th>貸方</th>
+                                    <th class="text-right">税込金額</th><th class="text-right">税抜金額</th>
+                                    <th>取引先</th><th>元帳摘要</th><th>税率</th>
                                 </tr>
                             </thead>
                             <tbody id="recent-tbody"></tbody>
@@ -124,29 +171,23 @@
                 <datalist id="counterparty-list"></datalist>
             </section>
 
-            <!-- Tab 2: 証憑読み取り -->
-            <section id="tab-scan" class="tab-panel">
+            <!-- View 2: 証憑読み取り -->
+            <section id="view-scan" class="content-view">
                 <div class="card">
                     <h2 class="card-title">証憑読み取り</h2>
                     <div id="drop-zone" class="drop-zone">
                         <div class="drop-zone-icon">
-                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                <polyline points="17 8 12 3 7 8"/>
-                                <line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                         </div>
                         <p>レシート・請求書・CSV明細をドラッグ&ドロップ</p>
                         <p class="drop-zone-hint">または<span class="link">ファイルを選択</span></p>
                         <input type="file" id="file-input" multiple accept="image/*,.csv,.pdf" hidden>
                     </div>
                 </div>
-
                 <div id="scan-status" class="status-area hidden">
                     <div class="spinner"></div>
                     <p id="scan-status-text">AIが解析中...</p>
                 </div>
-
                 <div id="scan-results" class="card hidden">
                     <h3 class="card-subtitle">解析結果の確認</h3>
                     <div id="scan-duplicate-alert" class="alert alert-warn hidden">
@@ -155,16 +196,7 @@
                     <div class="table-wrap">
                         <table id="scan-table">
                             <thead>
-                                <tr>
-                                    <th>日付</th>
-                                    <th>借方</th>
-                                    <th>貸方</th>
-                                    <th>金額</th>
-                                    <th>税区分</th>
-                                    <th>取引先</th>
-                                    <th>摘要</th>
-                                    <th></th>
-                                </tr>
+                                <tr><th>日付</th><th>借方</th><th>貸方</th><th>金額</th><th>税区分</th><th>取引先</th><th>摘要</th><th></th></tr>
                             </thead>
                             <tbody id="scan-tbody"></tbody>
                         </table>
@@ -177,33 +209,22 @@
                 </div>
             </section>
 
-            <!-- Tab 3: 仕訳帳 -->
-            <section id="tab-journal-book" class="tab-panel">
+            <!-- View 3: 仕訳帳 -->
+            <section id="view-journal-book" class="content-view">
                 <div class="card">
                     <h2 class="card-title">仕訳帳</h2>
                     <div class="filter-bar" id="jb-filters">
                         <input type="date" id="jb-start" class="filter-input">
                         <span class="filter-sep">〜</span>
                         <input type="date" id="jb-end" class="filter-input">
-                        <select id="jb-account" class="filter-input">
-                            <option value="">全科目</option>
-                        </select>
+                        <select id="jb-account" class="filter-input"><option value="">全科目</option></select>
                         <input type="text" id="jb-search" class="filter-input" placeholder="取引先・摘要で検索">
                         <button id="jb-apply" class="btn btn-sm btn-primary">検索</button>
                     </div>
                     <div class="table-wrap">
                         <table id="jb-table">
                             <thead>
-                                <tr>
-                                    <th>日付</th>
-                                    <th>借方</th>
-                                    <th>貸方</th>
-                                    <th class="text-right">金額</th>
-                                    <th>税区分</th>
-                                    <th>取引先</th>
-                                    <th>摘要</th>
-                                    <th style="width:80px;"></th>
-                                </tr>
+                                <tr><th>日付</th><th>借方</th><th>貸方</th><th class="text-right">金額</th><th>税区分</th><th>取引先</th><th>摘要</th><th style="width:80px;"></th></tr>
                             </thead>
                             <tbody id="jb-tbody"></tbody>
                         </table>
@@ -212,55 +233,145 @@
                 </div>
             </section>
 
-            <!-- Tab 4: 残高一覧表 -->
-            <section id="tab-trial-balance" class="tab-panel">
+            <!-- View 4: 総勘定元帳 (General Ledger with sub-tabs) -->
+            <section id="view-ledger" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">勘定科目別残高一覧表</h2>
-                    <div class="filter-bar">
-                        <label>期間:</label>
-                        <input type="date" id="tb-start" class="filter-input">
-                        <span class="filter-sep">〜</span>
-                        <input type="date" id="tb-end" class="filter-input">
-                        <button id="tb-apply" class="btn btn-sm btn-primary">表示</button>
+                    <h2 class="card-title">総勘定元帳</h2>
+                    <div class="sub-tab-nav" id="ledger-sub-nav">
+                        <button class="sub-tab-btn active" data-subtab="trial-balance">残高一覧表</button>
+                        <button class="sub-tab-btn" data-subtab="balance-sheet">貸借対照表</button>
+                        <button class="sub-tab-btn" data-subtab="profit-loss">損益計算書</button>
                     </div>
-                    <div id="tb-content"></div>
+                    <div class="filter-bar" id="ledger-filters">
+                        <label>期間:</label>
+                        <input type="date" id="ledger-start" class="filter-input">
+                        <span class="filter-sep">〜</span>
+                        <input type="date" id="ledger-end" class="filter-input">
+                        <button id="ledger-apply" class="btn btn-sm btn-primary">表示</button>
+                    </div>
+                    <div id="ledger-tab-trial-balance" class="ledger-sub-panel active">
+                        <div id="tb-content"></div>
+                    </div>
+                    <div id="ledger-tab-balance-sheet" class="ledger-sub-panel">
+                        <div id="bs-content"></div>
+                    </div>
+                    <div id="ledger-tab-profit-loss" class="ledger-sub-panel">
+                        <div id="pl-content"></div>
+                    </div>
+                    <!-- Drill-down: Account detail -->
+                    <div id="ledger-detail" class="hidden">
+                        <button id="ledger-detail-back" class="btn btn-ghost btn-sm">← 一覧に戻る</button>
+                        <h3 id="ledger-detail-title" style="margin:0.75rem 0;"></h3>
+                        <div id="ledger-detail-content"></div>
+                    </div>
                 </div>
             </section>
 
-            <!-- Tab 5: 貸借対照表 -->
-            <section id="tab-balance-sheet" class="tab-panel">
+            <!-- View 5: 取引先 -->
+            <section id="view-counterparty" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">貸借対照表</h2>
-                    <div class="filter-bar">
-                        <label>期間:</label>
-                        <input type="date" id="bs-start" class="filter-input">
-                        <span class="filter-sep">〜</span>
-                        <input type="date" id="bs-end" class="filter-input">
-                        <button id="bs-apply" class="btn btn-sm btn-primary">表示</button>
+                    <div class="card-header-row">
+                        <h2 class="card-title" style="margin:0;">取引先管理</h2>
+                        <button id="cp-add-btn" class="btn btn-primary btn-sm">+ 新規登録</button>
                     </div>
-                    <div id="bs-content"></div>
+                    <div id="cp-form" class="cp-form hidden">
+                        <input type="hidden" id="cp-edit-id">
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2;"><label>取引先名 *</label><input type="text" id="cp-name" placeholder="ABC商事"></div>
+                            <div class="form-group" style="flex:1;"><label>コード</label><input type="text" id="cp-code" placeholder="A001"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1;"><label>連絡先</label><input type="text" id="cp-contact" placeholder="03-1234-5678"></div>
+                            <div class="form-group" style="flex:1;"><label>備考</label><input type="text" id="cp-notes" placeholder="メモ"></div>
+                        </div>
+                        <div class="form-row" style="gap:0.5rem; margin-top:0.5rem;">
+                            <button id="cp-save-btn" class="btn btn-primary btn-sm">保存</button>
+                            <button id="cp-cancel-btn" class="btn btn-ghost btn-sm">キャンセル</button>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table id="cp-table">
+                            <thead><tr><th>取引先名</th><th>コード</th><th>連絡先</th><th>備考</th><th style="width:80px;"></th></tr></thead>
+                            <tbody id="cp-tbody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </section>
 
-            <!-- Tab 6: 損益計算書 -->
-            <section id="tab-profit-loss" class="tab-panel">
+            <!-- View 6: 期首残高設定 -->
+            <section id="view-opening-balance" class="content-view">
                 <div class="card">
-                    <h2 class="card-title">損益計算書</h2>
+                    <h2 class="card-title">期首残高設定</h2>
                     <div class="filter-bar">
-                        <label>期間:</label>
-                        <input type="date" id="pl-start" class="filter-input">
-                        <span class="filter-sep">〜</span>
-                        <input type="date" id="pl-end" class="filter-input">
-                        <button id="pl-apply" class="btn btn-sm btn-primary">表示</button>
+                        <label>会計年度:</label>
+                        <select id="ob-fiscal-year" class="filter-input"></select>
+                        <button id="ob-load" class="btn btn-sm btn-primary">読み込み</button>
                     </div>
-                    <div id="pl-content"></div>
+                    <div class="table-wrap">
+                        <table id="ob-table">
+                            <thead><tr><th>コード</th><th>勘定科目</th><th>科目区分</th><th class="text-right" style="width:150px;">期首残高</th><th style="width:180px;">備考</th></tr></thead>
+                            <tbody id="ob-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="card-actions">
+                        <button id="ob-save" class="btn btn-primary">期首残高を保存</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- View 7: データのバックアップ -->
+            <section id="view-backup" class="content-view">
+                <div class="card">
+                    <h2 class="card-title">データのバックアップ</h2>
+                    <p class="card-desc">データベースの内容をダウンロードして外部に保存できます。</p>
+                    <div class="backup-options">
+                        <div class="backup-card">
+                            <h3>JSON形式</h3>
+                            <p>全データを読みやすいJSON形式でエクスポートします。</p>
+                            <button id="backup-json" class="btn btn-primary">JSONバックアップ</button>
+                        </div>
+                        <div class="backup-card">
+                            <h3>SQLiteデータベース</h3>
+                            <p>データベースファイルをそのままダウンロードします。</p>
+                            <button id="backup-sqlite" class="btn btn-ghost">SQLiteダウンロード</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- View 8: アウトプット -->
+            <section id="view-output" class="content-view">
+                <div class="card">
+                    <h2 class="card-title">アウトプット</h2>
+                    <div class="output-options">
+                        <div class="output-section">
+                            <h3>仕訳帳エクスポート</h3>
+                            <div class="filter-bar">
+                                <label>期間:</label>
+                                <input type="date" id="out-start" class="filter-input">
+                                <span class="filter-sep">〜</span>
+                                <input type="date" id="out-end" class="filter-input">
+                            </div>
+                            <div class="output-btns">
+                                <button id="out-journal-csv" class="btn btn-primary btn-sm">CSV ダウンロード</button>
+                                <button id="out-journal-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
+                            </div>
+                        </div>
+                        <div class="output-section">
+                            <h3>残高試算表エクスポート</h3>
+                            <div class="output-btns">
+                                <button id="out-tb-csv" class="btn btn-primary btn-sm">CSV ダウンロード</button>
+                                <button id="out-tb-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
         </main>
 
         <footer class="app-footer">
-            <p>AI Accounting Tool - Gemini Powered</p>
+            <p>Hinakira会計 - Gemini AI Powered</p>
         </footer>
     </div>
 
@@ -289,22 +400,16 @@
     <!-- Login Overlay -->
     <div id="login-overlay" class="overlay hidden">
         <div class="card overlay-card">
-            <h2>AI 複式簿記くん</h2>
+            <h2>Hinakira会計</h2>
             <p>個人事業主のための AI 自動記帳ツール</p>
             <div class="setup-steps">
                 <div class="setup-step">
                     <span class="step-num">1</span>
-                    <div>
-                        <strong>Gemini APIキーを取得</strong>
-                        <a href="https://aistudio.google.com/app/apikey" target="_blank" class="setup-link">取得する →</a>
-                    </div>
+                    <div><strong>Gemini APIキーを取得</strong><a href="https://aistudio.google.com/app/apikey" target="_blank" class="setup-link">取得する →</a></div>
                 </div>
                 <div class="setup-step">
                     <span class="step-num">2</span>
-                    <div>
-                        <strong>スプレッドシートを作成</strong>
-                        <a href="https://sheets.new" target="_blank" class="setup-link">作成する →</a>
-                    </div>
+                    <div><strong>スプレッドシートを作成</strong><a href="https://sheets.new" target="_blank" class="setup-link">作成する →</a></div>
                 </div>
                 <div class="setup-step">
                     <span class="step-num">3</span>
@@ -315,7 +420,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=3"></script>
+    <script src="script.js?v=5"></script>
 </body>
 
 </html>

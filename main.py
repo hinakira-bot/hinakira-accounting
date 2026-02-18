@@ -1,5 +1,5 @@
 """
-AI Accounting Tool - Flask Backend
+Hinakira会計 - Flask Backend
 Main routing and API endpoints.
 """
 import os
@@ -262,13 +262,130 @@ def api_settings_update():
 
 
 # ============================
-#  Counterparties API
+#  Counterparties API (CRUD)
 # ============================
 @app.route('/api/counterparties', methods=['GET'])
 def api_counterparties():
-    """Get distinct counterparty names for autocomplete."""
-    counterparties = models.get_counterparties()
+    """Get counterparty names for autocomplete."""
+    counterparties = models.get_counterparty_names()
     return jsonify({"counterparties": counterparties})
+
+
+@app.route('/api/counterparties/list', methods=['GET'])
+def api_counterparties_list():
+    """Get all counterparties with full details."""
+    items = models.get_counterparties_list()
+    return jsonify({"counterparties": items})
+
+
+@app.route('/api/counterparties', methods=['POST'])
+def api_counterparty_create():
+    """Create a new counterparty."""
+    data = request.json
+    if not data or not data.get('name'):
+        return jsonify({"error": "Name is required"}), 400
+    new_id = models.create_counterparty(data)
+    return jsonify({"status": "success", "id": new_id})
+
+
+@app.route('/api/counterparties/<int:cp_id>', methods=['PUT'])
+def api_counterparty_update(cp_id):
+    """Update a counterparty."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data"}), 400
+    success = models.update_counterparty(cp_id, data)
+    return jsonify({"status": "success"}) if success else (jsonify({"error": "Failed"}), 400)
+
+
+@app.route('/api/counterparties/<int:cp_id>', methods=['DELETE'])
+def api_counterparty_delete(cp_id):
+    """Soft-delete a counterparty."""
+    success = models.delete_counterparty(cp_id)
+    return jsonify({"status": "success"}) if success else (jsonify({"error": "Failed"}), 400)
+
+
+# ============================
+#  Opening Balances API
+# ============================
+@app.route('/api/opening-balances', methods=['GET'])
+def api_opening_balances_get():
+    """Get opening balances for a fiscal year."""
+    fiscal_year = request.args.get('fiscal_year', str(__import__('datetime').date.today().year))
+    balances = models.get_opening_balances(fiscal_year)
+    return jsonify({"balances": balances, "fiscal_year": fiscal_year})
+
+
+@app.route('/api/opening-balances', methods=['POST'])
+def api_opening_balances_save():
+    """Bulk save opening balances."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data"}), 400
+    fiscal_year = data.get('fiscal_year', str(__import__('datetime').date.today().year))
+    balances = data.get('balances', [])
+    success = models.save_opening_balances(fiscal_year, balances)
+    return jsonify({"status": "success"}) if success else (jsonify({"error": "Save failed"}), 500)
+
+
+# ============================
+#  General Ledger API
+# ============================
+@app.route('/api/ledger/<int:account_id>', methods=['GET'])
+def api_ledger(account_id):
+    """Get per-account entries with running balance."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    result = models.get_ledger_entries(account_id, start_date, end_date)
+    return jsonify(result)
+
+
+# ============================
+#  Backup API
+# ============================
+@app.route('/api/backup/download', methods=['GET'])
+def api_backup_download():
+    """Download database backup."""
+    format_type = request.args.get('format', 'json')
+    if format_type == 'sqlite':
+        return send_from_directory('data', 'accounting.db', as_attachment=True,
+                                   download_name='accounting_backup.db')
+    else:
+        data = models.get_full_backup()
+        return jsonify(data)
+
+
+# ============================
+#  Export API
+# ============================
+@app.route('/api/export/journal', methods=['GET'])
+def api_export_journal():
+    """Export journal entries as CSV or JSON."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    fmt = request.args.get('format', 'json')
+    entries = models.get_journal_export(start_date, end_date)
+
+    if fmt == 'csv':
+        import csv
+        output = io.StringIO()
+        if entries:
+            writer = csv.DictWriter(output, fieldnames=list(entries[0].keys()))
+            writer.writeheader()
+            writer.writerows(entries)
+        from flask import Response
+        return Response(output.getvalue(), mimetype='text/csv',
+                       headers={"Content-Disposition": "attachment; filename=journal_export.csv"})
+    return jsonify({"entries": entries})
+
+
+@app.route('/api/export/trial-balance', methods=['GET'])
+def api_export_trial_balance():
+    """Export trial balance data."""
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    balances = models.get_trial_balance(start_date, end_date)
+    return jsonify({"balances": balances})
 
 
 # ============================

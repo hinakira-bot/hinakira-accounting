@@ -20,7 +20,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSettingsBtn = document.getElementById('save-settings-btn');
     const loginOverlay = document.getElementById('login-overlay');
     const overlayLoginBtn = document.getElementById('overlay-login-btn');
-    const tabNav = document.getElementById('tab-nav');
+
+    // Menu Grid navigation
+    const menuGrid = document.getElementById('menu-grid');
+    const backToMenuBtn = document.getElementById('back-to-menu');
+    const logoTitle = document.getElementById('logo-title');
 
     // ============================================================
     //  Section 3: Google OAuth
@@ -85,7 +89,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (key) {
             localStorage.setItem('gemini_api_key', key);
             if (sid) localStorage.setItem('spreadsheet_id', sid);
-            // Also save to server
             fetchAPI('/api/settings', 'POST', { gemini_api_key: key, spreadsheet_id: sid });
             settingsModal.classList.add('hidden');
             showToast('設定を保存しました');
@@ -100,38 +103,77 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    //  Section 5: Tab Navigation (Hash Router)
+    //  Section 5: Menu Grid Navigation (Hash Router)
     // ============================================================
-    function switchTab(tabId) {
-        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        const panel = document.getElementById('tab-' + tabId);
-        const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
-        if (panel) panel.classList.add('active');
-        if (btn) btn.classList.add('active');
-        // Trigger data loading for specific tabs
-        if (tabId === 'journal-book') loadJournalBook();
-        if (tabId === 'trial-balance') loadTrialBalance();
-        if (tabId === 'balance-sheet') loadBalanceSheet();
-        if (tabId === 'profit-loss') loadProfitLoss();
+    // View loaders: called when a view becomes active
+    const VIEW_LOADERS = {
+        'journal-input': () => { /* already loaded on login */ },
+        'scan': () => {},
+        'journal-book': () => loadJournalBook(),
+        'ledger': () => loadCurrentLedgerSubTab(),
+        'counterparty': () => loadCounterpartyList(),
+        'opening-balance': () => loadOpeningBalances(),
+        'backup': () => {},
+        'output': () => {},
+    };
+
+    function showMenu() {
+        // Hide all content views
+        document.querySelectorAll('.content-view').forEach(v => v.classList.remove('active'));
+        // Show menu grid
+        menuGrid.classList.add('active');
+        // Hide back button, show logo
+        backToMenuBtn.classList.add('hidden');
+        logoTitle.classList.remove('hidden');
+        location.hash = 'menu';
     }
 
-    tabNav.addEventListener('click', (e) => {
-        const btn = e.target.closest('.tab-btn');
-        if (!btn) return;
-        const tab = btn.dataset.tab;
-        location.hash = tab;
-        switchTab(tab);
+    function showView(viewId) {
+        // Hide menu grid
+        menuGrid.classList.remove('active');
+        // Hide all content views
+        document.querySelectorAll('.content-view').forEach(v => v.classList.remove('active'));
+        // Show target view
+        const target = document.getElementById('view-' + viewId);
+        if (target) {
+            target.classList.add('active');
+        }
+        // Show back button, hide logo
+        backToMenuBtn.classList.remove('hidden');
+        logoTitle.classList.add('hidden');
+        // Update hash
+        location.hash = viewId;
+        // Call loader
+        if (VIEW_LOADERS[viewId]) VIEW_LOADERS[viewId]();
+    }
+
+    // Menu tile click
+    menuGrid.addEventListener('click', (e) => {
+        const tile = e.target.closest('.menu-tile');
+        if (!tile) return;
+        const viewId = tile.dataset.view;
+        if (viewId) showView(viewId);
     });
 
+    // Back button
+    backToMenuBtn.addEventListener('click', showMenu);
+
+    // Hash routing
     window.addEventListener('hashchange', () => {
-        const hash = location.hash.replace('#', '') || 'journal-input';
-        switchTab(hash);
+        const hash = location.hash.replace('#', '');
+        if (!hash || hash === 'menu') {
+            showMenu();
+        } else {
+            showView(hash);
+        }
     });
 
-    // Initial tab from hash
-    const initTab = location.hash.replace('#', '') || 'journal-input';
-    switchTab(initTab);
+    // Initial route from hash
+    const initHash = location.hash.replace('#', '');
+    if (initHash && initHash !== 'menu') {
+        showView(initHash);
+    }
+    // If no hash, menu is already visible (active class in HTML)
 
     // ============================================================
     //  Section 6: Shared Utilities
@@ -206,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    //  Section 7: Tab 1 — 仕訳入力 (Journal Entry) [TKC FX2 Style]
+    //  Section 7: View 1 — 仕訳入力 (Journal Entry) [TKC FX2 Style]
     // ============================================================
     const journalForm = document.getElementById('journal-form');
     const jeDate = document.getElementById('je-date');
@@ -226,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Tax-exclusive amount auto-calculation ---
     function updateNetAmount() {
         const amt = parseInt(jeAmount.value) || 0;
-        const rate = jeTaxRate.value;   // "10%", "8%", "0%", or ""
+        const rate = jeTaxRate.value;
         if (!amt) { jeNetAmount.value = ''; return; }
         let tax = 0;
         if (rate === '10%') tax = Math.floor(amt * 10 / 110);
@@ -243,7 +285,6 @@ document.addEventListener('DOMContentLoaded', () => {
             jeTaxRate.value = '0%';
             updateNetAmount();
         }
-        // If switching to 課税 and rate is 0%, reset to blank for AI
         if ((cat === '課税仕入' || cat === '課税売上') && jeTaxRate.value === '0%') {
             jeTaxRate.value = '';
             updateNetAmount();
@@ -251,12 +292,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     jeTaxRate.addEventListener('change', () => {
-        const rate = jeTaxRate.value;
-        const cat = jeTaxCategory.value;
-        // If rate is 0% and category is taxable, auto-set to 非課税
-        if (rate === '0%' && (cat === '課税仕入' || cat === '課税売上' || cat === '')) {
-            // Don't auto-change, just update net amount
-        }
         updateNetAmount();
     });
 
@@ -270,18 +305,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Resolve tax_classification for DB storage ---
-    // Maps (tax_category, tax_rate) → DB tax_classification value
     function resolveTaxClassification(taxCategory, taxRate) {
         if (taxCategory === '非課税') return '非課税';
         if (taxCategory === '不課税') return '不課税';
-        // For 課税仕入/課税売上 or blank, use the tax rate
         if (taxRate === '10%') return '10%';
         if (taxRate === '8%') return '8%';
-        // Default
         return '10%';
     }
 
-    // --- Reverse: DB tax_classification → display (tax_category, tax_rate) ---
+    // --- Reverse: DB tax_classification → display ---
     function parseTaxClassification(dbValue) {
         if (dbValue === '非課税') return { taxCategory: '非課税', taxRate: '0%' };
         if (dbValue === '不課税') return { taxCategory: '不課税', taxRate: '0%' };
@@ -303,7 +335,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Build prediction request: send only user-filled fields as fixed
         const predData = [{
             index: 0,
             counterparty: counterparty,
@@ -327,12 +358,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (predictions.error) throw new Error(predictions.error);
             if (Array.isArray(predictions) && predictions.length > 0) {
                 const p = predictions[0];
-                // Only fill empty fields
                 if (!jeDebit.value.trim() && p.debit) jeDebit.value = p.debit;
                 if (!jeCredit.value.trim() && p.credit) jeCredit.value = p.credit;
                 if (!jeTaxCategory.value && p.tax_category) jeTaxCategory.value = p.tax_category;
                 if (!jeTaxRate.value && p.tax_rate) jeTaxRate.value = p.tax_rate;
-                // Sync linkage: if category is 非課税/不課税, force rate to 0%
                 if (jeTaxCategory.value === '非課税' || jeTaxCategory.value === '不課税') {
                     jeTaxRate.value = '0%';
                 }
@@ -381,7 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 jeDate.value = todayStr();
                 jeNetAmount.value = '';
                 loadRecentEntries();
-                loadCounterparties(); // refresh counterparty suggestions
+                loadCounterparties();
             } else {
                 showToast('登録に失敗しました: ' + (res.error || ''), true);
             }
@@ -419,7 +448,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    //  Section 8: Tab 2 — 証憑読み取り (Document Scanning)
+    //  Section 8: View 2 — 証憑読み取り (Document Scanning)
     // ============================================================
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
@@ -496,7 +525,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         scanDupAlert.classList.toggle('hidden', !hasDup);
 
-        // Bind events
         scanTbody.querySelectorAll('.scan-input').forEach(el => {
             el.addEventListener('change', (e) => {
                 const idx = parseInt(e.target.dataset.i);
@@ -511,7 +539,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Save scan results to DB
     scanSaveBtn.addEventListener('click', async () => {
         const valid = scanResults.filter(r => parseInt(r.amount) > 0);
         if (!valid.length) { showToast('保存するデータがありません', true); return; }
@@ -550,7 +577,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ============================================================
-    //  Section 9: Tab 3 — 仕訳帳 (Journal Book)
+    //  Section 9: View 3 — 仕訳帳 (Journal Book)
     // ============================================================
     const jbStartInput = document.getElementById('jb-start');
     const jbEndInput = document.getElementById('jb-end');
@@ -563,7 +590,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let jbPage = 1;
     const JB_PER_PAGE = 20;
 
-    // Set default date range to current year
     const fy = fiscalYearDates();
     jbStartInput.value = fy.start;
     jbEndInput.value = fy.end;
@@ -610,10 +636,9 @@ document.addEventListener('DOMContentLoaded', () => {
         `).join('');
 
         if (!entries.length) {
-            jbTbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:2rem;">仕訳データがありません</td></tr>';
+            jbTbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:2rem;">仕訳データがありません</td></tr>';
         }
 
-        // Pagination
         const total = data.total || 0;
         const totalPages = Math.ceil(total / JB_PER_PAGE);
         let pgHtml = '';
@@ -624,7 +649,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         jbPagination.innerHTML = pgHtml;
 
-        // Bind events
         jbTbody.querySelectorAll('.jb-delete').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.dataset.id;
@@ -717,22 +741,122 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ============================================================
-    //  Section 10: Tab 4 — 残高一覧表 (Trial Balance)
+    //  Section 10: View 4 — 総勘定元帳 (General Ledger with Sub-tabs)
     // ============================================================
-    const tbStartInput = document.getElementById('tb-start');
-    const tbEndInput = document.getElementById('tb-end');
-    const tbApplyBtn = document.getElementById('tb-apply');
+    const ledgerSubNav = document.getElementById('ledger-sub-nav');
+    const ledgerStartInput = document.getElementById('ledger-start');
+    const ledgerEndInput = document.getElementById('ledger-end');
+    const ledgerApplyBtn = document.getElementById('ledger-apply');
+    const ledgerDetail = document.getElementById('ledger-detail');
+    const ledgerDetailBack = document.getElementById('ledger-detail-back');
+    const ledgerDetailTitle = document.getElementById('ledger-detail-title');
+    const ledgerDetailContent = document.getElementById('ledger-detail-content');
+
     const tbContent = document.getElementById('tb-content');
+    const bsContent = document.getElementById('bs-content');
+    const plContent = document.getElementById('pl-content');
 
-    tbStartInput.value = fy.start;
-    tbEndInput.value = fy.end;
+    // Set default dates
+    ledgerStartInput.value = fy.start;
+    ledgerEndInput.value = fy.end;
 
-    tbApplyBtn.addEventListener('click', loadTrialBalance);
+    let currentLedgerSubTab = 'trial-balance';
 
+    // Sub-tab switching
+    ledgerSubNav.addEventListener('click', (e) => {
+        const btn = e.target.closest('.sub-tab-btn');
+        if (!btn) return;
+        const subtab = btn.dataset.subtab;
+        currentLedgerSubTab = subtab;
+
+        // Update button states
+        ledgerSubNav.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Show/hide panels
+        document.querySelectorAll('.ledger-sub-panel').forEach(p => p.classList.remove('active'));
+        const panel = document.getElementById('ledger-tab-' + subtab);
+        if (panel) panel.classList.add('active');
+
+        // Hide drill-down detail when switching tabs
+        hideLedgerDetail();
+
+        // Load data
+        loadCurrentLedgerSubTab();
+    });
+
+    ledgerApplyBtn.addEventListener('click', loadCurrentLedgerSubTab);
+
+    function loadCurrentLedgerSubTab() {
+        if (currentLedgerSubTab === 'trial-balance') loadTrialBalance();
+        else if (currentLedgerSubTab === 'balance-sheet') loadBalanceSheet();
+        else if (currentLedgerSubTab === 'profit-loss') loadProfitLoss();
+    }
+
+    function hideLedgerDetail() {
+        ledgerDetail.classList.add('hidden');
+        // Show sub-panels again
+        document.querySelectorAll('.ledger-sub-panel').forEach(p => {
+            if (p.id === 'ledger-tab-' + currentLedgerSubTab) p.classList.add('active');
+        });
+    }
+
+    ledgerDetailBack.addEventListener('click', hideLedgerDetail);
+
+    // --- Account Drill-down ---
+    async function showAccountDetail(accountId) {
+        const params = new URLSearchParams();
+        if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
+        if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
+
+        try {
+            const data = await fetchAPI(`/api/ledger/${accountId}?${params.toString()}`);
+            const acc = data.account || {};
+            ledgerDetailTitle.textContent = `${acc.code || ''} ${acc.name || ''}`;
+
+            // Hide sub-panels, show detail
+            document.querySelectorAll('.ledger-sub-panel').forEach(p => p.classList.remove('active'));
+            ledgerDetail.classList.remove('hidden');
+
+            const entries = data.entries || [];
+            const openBal = data.opening_balance || 0;
+
+            let html = `<p style="margin-bottom:0.75rem;font-size:0.8125rem;color:var(--text-secondary);">期首残高: <strong>${fmt(openBal)}</strong></p>`;
+            html += `<div class="table-wrap"><table class="tb-table">
+                <thead><tr>
+                    <th>日付</th><th>相手科目</th><th>摘要</th><th>取引先</th>
+                    <th class="text-right">借方</th><th class="text-right">貸方</th>
+                    <th class="text-right">差引残高</th>
+                </tr></thead><tbody>`;
+
+            entries.forEach(e => {
+                html += `<tr>
+                    <td>${e.entry_date || ''}</td>
+                    <td>${e.counter_account || ''}</td>
+                    <td>${e.memo || ''}</td>
+                    <td>${e.counterparty || ''}</td>
+                    <td class="text-right">${e.debit_amount ? fmt(e.debit_amount) : ''}</td>
+                    <td class="text-right">${e.credit_amount ? fmt(e.credit_amount) : ''}</td>
+                    <td class="text-right" style="font-weight:600;">${fmt(e.balance)}</td>
+                </tr>`;
+            });
+
+            if (!entries.length) {
+                html += '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--text-dim);">該当する仕訳がありません</td></tr>';
+            }
+
+            html += '</tbody></table></div>';
+            ledgerDetailContent.innerHTML = html;
+        } catch (err) {
+            showToast('元帳明細の読み込みに失敗しました', true);
+        }
+    }
+
+    // --- Trial Balance ---
     async function loadTrialBalance() {
         const params = new URLSearchParams();
-        if (tbStartInput.value) params.set('start_date', tbStartInput.value);
-        if (tbEndInput.value) params.set('end_date', tbEndInput.value);
+        if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
+        if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
 
         try {
             const data = await fetchAPI('/api/trial-balance?' + params.toString());
@@ -744,7 +868,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderTrialBalance(balances) {
         if (!balances.length) {
-            tbContent.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem;">データがありません</p>';
+            tbContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
             return;
         }
 
@@ -781,7 +905,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         html += `</tbody></table>`;
 
-        // Grand total
         html += `<div class="tb-grand-total">
             <span>借方合計: <strong>${fmt(grandDebit)}</strong></span>
             <span>貸方合計: <strong>${fmt(grandCredit)}</strong></span>
@@ -790,37 +913,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         tbContent.innerHTML = html;
 
-        // Drill-down: click account row → switch to journal book with that account filter
+        // Drill-down: click account row → show detail within ledger view
         tbContent.querySelectorAll('.tb-row').forEach(row => {
             row.addEventListener('click', () => {
-                const accId = row.dataset.accountId;
-                jbAccountSelect.value = accId;
-                jbStartInput.value = tbStartInput.value;
-                jbEndInput.value = tbEndInput.value;
-                jbPage = 1;
-                location.hash = 'journal-book';
-                switchTab('journal-book');
+                showAccountDetail(row.dataset.accountId);
             });
         });
     }
 
-    // ============================================================
-    //  Section 11: Tab 5 — 貸借対照表 (Balance Sheet)
-    // ============================================================
-    const bsStartInput = document.getElementById('bs-start');
-    const bsEndInput = document.getElementById('bs-end');
-    const bsApplyBtn = document.getElementById('bs-apply');
-    const bsContent = document.getElementById('bs-content');
-
-    bsStartInput.value = fy.start;
-    bsEndInput.value = fy.end;
-
-    bsApplyBtn.addEventListener('click', loadBalanceSheet);
-
+    // --- Balance Sheet ---
     async function loadBalanceSheet() {
         const params = new URLSearchParams();
-        if (bsStartInput.value) params.set('start_date', bsStartInput.value);
-        if (bsEndInput.value) params.set('end_date', bsEndInput.value);
+        if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
+        if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
 
         try {
             const data = await fetchAPI('/api/trial-balance?' + params.toString());
@@ -836,7 +941,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const equity = balances.filter(b => b.account_type === '純資産');
 
         if (!assets.length && !liabilities.length && !equity.length) {
-            bsContent.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem;">データがありません</p>';
+            bsContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
             return;
         }
 
@@ -856,7 +961,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let html = '<div class="bs-container">';
 
-        // LEFT: 資産の部
         html += `<div class="bs-side">
             <div class="bs-side-title">資産の部</div>
             <table class="bs-table">
@@ -871,7 +975,6 @@ document.addEventListener('DOMContentLoaded', () => {
             </table>
         </div>`;
 
-        // RIGHT: 負債・純資産の部
         html += `<div class="bs-side">
             <div class="bs-side-title">負債・純資産の部</div>
             <table class="bs-table">
@@ -897,7 +1000,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         html += '</div>';
 
-        // Balance check
         const isBalanced = assetTotal === rightTotal;
         html += `<div class="bs-balance-check ${isBalanced ? 'balanced' : 'unbalanced'}">
             ${isBalanced
@@ -911,34 +1013,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // Drill-down
         bsContent.querySelectorAll('.clickable').forEach(row => {
             row.addEventListener('click', () => {
-                const accId = row.dataset.accountId;
-                jbAccountSelect.value = accId;
-                jbStartInput.value = bsStartInput.value;
-                jbEndInput.value = bsEndInput.value;
-                jbPage = 1;
-                location.hash = 'journal-book';
-                switchTab('journal-book');
+                showAccountDetail(row.dataset.accountId);
             });
         });
     }
 
-    // ============================================================
-    //  Section 12: Tab 6 — 損益計算書 (Profit & Loss)
-    // ============================================================
-    const plStartInput = document.getElementById('pl-start');
-    const plEndInput = document.getElementById('pl-end');
-    const plApplyBtn = document.getElementById('pl-apply');
-    const plContent = document.getElementById('pl-content');
-
-    plStartInput.value = fy.start;
-    plEndInput.value = fy.end;
-
-    plApplyBtn.addEventListener('click', loadProfitLoss);
-
+    // --- Profit & Loss ---
     async function loadProfitLoss() {
         const params = new URLSearchParams();
-        if (plStartInput.value) params.set('start_date', plStartInput.value);
-        if (plEndInput.value) params.set('end_date', plEndInput.value);
+        if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
+        if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
 
         try {
             const data = await fetchAPI('/api/trial-balance?' + params.toString());
@@ -953,7 +1037,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const expenses = balances.filter(b => b.account_type === '費用');
 
         if (!revenues.length && !expenses.length) {
-            plContent.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem;">データがありません</p>';
+            plContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
             return;
         }
 
@@ -996,7 +1080,6 @@ document.addEventListener('DOMContentLoaded', () => {
         html += buildSection('収益の部', revenues, '収益合計', revenueTotal);
         html += buildSection('費用の部', expenses, '費用合計', expenseTotal);
 
-        // Net income/loss
         const isProfit = netIncome >= 0;
         html += `<div class="pl-net-income ${isProfit ? 'profit' : 'loss'}">
             <span>${isProfit ? '当期純利益' : '当期純損失'}</span>
@@ -1008,27 +1091,429 @@ document.addEventListener('DOMContentLoaded', () => {
         // Drill-down
         plContent.querySelectorAll('.clickable').forEach(row => {
             row.addEventListener('click', () => {
-                const accId = row.dataset.accountId;
-                jbAccountSelect.value = accId;
-                jbStartInput.value = plStartInput.value;
-                jbEndInput.value = plEndInput.value;
-                jbPage = 1;
-                location.hash = 'journal-book';
-                switchTab('journal-book');
+                showAccountDetail(row.dataset.accountId);
             });
         });
     }
 
     // ============================================================
-    //  Section 13: Keyboard Shortcuts
+    //  Section 11: View 5 — 取引先 (Counterparty Management)
+    // ============================================================
+    const cpAddBtn = document.getElementById('cp-add-btn');
+    const cpForm = document.getElementById('cp-form');
+    const cpEditId = document.getElementById('cp-edit-id');
+    const cpNameInput = document.getElementById('cp-name');
+    const cpCodeInput = document.getElementById('cp-code');
+    const cpContactInput = document.getElementById('cp-contact');
+    const cpNotesInput = document.getElementById('cp-notes');
+    const cpSaveBtn = document.getElementById('cp-save-btn');
+    const cpCancelBtn = document.getElementById('cp-cancel-btn');
+    const cpTbody = document.getElementById('cp-tbody');
+
+    cpAddBtn.addEventListener('click', () => {
+        cpEditId.value = '';
+        cpNameInput.value = '';
+        cpCodeInput.value = '';
+        cpContactInput.value = '';
+        cpNotesInput.value = '';
+        cpForm.classList.remove('hidden');
+        cpNameInput.focus();
+    });
+
+    cpCancelBtn.addEventListener('click', () => {
+        cpForm.classList.add('hidden');
+    });
+
+    cpSaveBtn.addEventListener('click', async () => {
+        const name = cpNameInput.value.trim();
+        if (!name) { showToast('取引先名は必須です', true); return; }
+
+        const payload = {
+            name: name,
+            code: cpCodeInput.value.trim(),
+            contact_info: cpContactInput.value.trim(),
+            notes: cpNotesInput.value.trim(),
+        };
+
+        const editId = cpEditId.value;
+        try {
+            let res;
+            if (editId) {
+                res = await fetchAPI(`/api/counterparties/${editId}`, 'PUT', payload);
+            } else {
+                res = await fetchAPI('/api/counterparties', 'POST', payload);
+            }
+            if (res.status === 'success') {
+                showToast(editId ? '取引先を更新しました' : '取引先を登録しました');
+                cpForm.classList.add('hidden');
+                loadCounterpartyList();
+                loadCounterparties(); // refresh datalist
+            } else {
+                showToast('保存に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        }
+    });
+
+    async function loadCounterpartyList() {
+        try {
+            const data = await fetchAPI('/api/counterparties/list');
+            const items = data.counterparties || [];
+            cpTbody.innerHTML = items.map(cp => `
+                <tr>
+                    <td>${cp.name || ''}</td>
+                    <td>${cp.code || ''}</td>
+                    <td>${cp.contact_info || ''}</td>
+                    <td>${cp.notes || ''}</td>
+                    <td>
+                        <button class="btn-icon cp-edit" data-id="${cp.id}" data-name="${escAttr(cp.name)}" data-code="${escAttr(cp.code)}" data-contact="${escAttr(cp.contact_info)}" data-notes="${escAttr(cp.notes)}" title="編集">✎</button>
+                        <button class="btn-icon jb-delete cp-delete" data-id="${cp.id}" title="削除">×</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            if (!items.length) {
+                cpTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-dim);">取引先が登録されていません</td></tr>';
+            }
+
+            // Bind edit
+            cpTbody.querySelectorAll('.cp-edit').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const b = e.target.closest('.cp-edit');
+                    cpEditId.value = b.dataset.id;
+                    cpNameInput.value = b.dataset.name || '';
+                    cpCodeInput.value = b.dataset.code || '';
+                    cpContactInput.value = b.dataset.contact || '';
+                    cpNotesInput.value = b.dataset.notes || '';
+                    cpForm.classList.remove('hidden');
+                    cpNameInput.focus();
+                });
+            });
+
+            // Bind delete
+            cpTbody.querySelectorAll('.cp-delete').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const id = e.target.closest('.cp-delete').dataset.id;
+                    if (!confirm('この取引先を削除しますか？')) return;
+                    try {
+                        const res = await fetchAPI(`/api/counterparties/${id}`, 'DELETE');
+                        if (res.status === 'success') {
+                            showToast('取引先を削除しました');
+                            loadCounterpartyList();
+                            loadCounterparties();
+                        } else {
+                            showToast('削除に失敗しました', true);
+                        }
+                    } catch (err) {
+                        showToast('通信エラー', true);
+                    }
+                });
+            });
+        } catch (err) {
+            showToast('取引先一覧の読み込みに失敗しました', true);
+        }
+    }
+
+    function escAttr(s) {
+        return (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ============================================================
+    //  Section 12: View 6 — 期首残高設定 (Opening Balances)
+    // ============================================================
+    const obFiscalYear = document.getElementById('ob-fiscal-year');
+    const obLoadBtn = document.getElementById('ob-load');
+    const obSaveBtn = document.getElementById('ob-save');
+    const obTbody = document.getElementById('ob-tbody');
+
+    // Populate fiscal year options
+    const currentYear = new Date().getFullYear();
+    for (let y = currentYear - 2; y <= currentYear + 1; y++) {
+        const opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y + '年度';
+        if (y === currentYear) opt.selected = true;
+        obFiscalYear.appendChild(opt);
+    }
+
+    obLoadBtn.addEventListener('click', loadOpeningBalances);
+    obSaveBtn.addEventListener('click', saveOpeningBalances);
+
+    async function loadOpeningBalances() {
+        const year = obFiscalYear.value;
+        try {
+            const data = await fetchAPI(`/api/opening-balances?fiscal_year=${year}`);
+            const balances = data.balances || [];
+
+            // Build map of existing balances
+            const balMap = {};
+            balances.forEach(b => { balMap[b.account_id] = b; });
+
+            // Render all accounts (BS accounts only: 資産, 負債, 純資産)
+            const bsAccounts = accounts.filter(a => ['資産', '負債', '純資産'].includes(a.account_type));
+
+            obTbody.innerHTML = bsAccounts.map(a => {
+                const existing = balMap[a.id];
+                const amount = existing ? existing.amount : 0;
+                const note = existing ? (existing.note || '') : '';
+                return `
+                <tr>
+                    <td>${a.code}</td>
+                    <td>${a.name}</td>
+                    <td>${a.account_type}</td>
+                    <td><input type="number" class="ob-amount" data-account-id="${a.id}" value="${amount}" style="width:120px;text-align:right;"></td>
+                    <td><input type="text" class="ob-note" data-account-id="${a.id}" value="${escAttr(note)}" placeholder="備考"></td>
+                </tr>`;
+            }).join('');
+
+            if (!bsAccounts.length) {
+                obTbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-dim);">勘定科目がありません</td></tr>';
+            }
+        } catch (err) {
+            showToast('期首残高の読み込みに失敗しました', true);
+        }
+    }
+
+    async function saveOpeningBalances() {
+        const year = obFiscalYear.value;
+        const balances = [];
+
+        obTbody.querySelectorAll('.ob-amount').forEach(input => {
+            const accountId = parseInt(input.dataset.accountId);
+            const amount = parseInt(input.value) || 0;
+            const noteInput = obTbody.querySelector(`.ob-note[data-account-id="${accountId}"]`);
+            const note = noteInput ? noteInput.value.trim() : '';
+            if (amount !== 0 || note) {
+                balances.push({ account_id: accountId, amount: amount, note: note });
+            }
+        });
+
+        try {
+            obSaveBtn.disabled = true;
+            obSaveBtn.textContent = '保存中...';
+            const res = await fetchAPI('/api/opening-balances', 'POST', {
+                fiscal_year: year,
+                balances: balances,
+            });
+            if (res.status === 'success') {
+                showToast('期首残高を保存しました');
+            } else {
+                showToast('保存に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        } finally {
+            obSaveBtn.disabled = false;
+            obSaveBtn.textContent = '期首残高を保存';
+        }
+    }
+
+    // ============================================================
+    //  Section 13: View 7 — データのバックアップ (Backup)
+    // ============================================================
+    const backupJsonBtn = document.getElementById('backup-json');
+    const backupSqliteBtn = document.getElementById('backup-sqlite');
+
+    backupJsonBtn.addEventListener('click', async () => {
+        try {
+            backupJsonBtn.disabled = true;
+            backupJsonBtn.textContent = 'ダウンロード中...';
+            const res = await fetch('/api/backup/download?format=json');
+            const blob = await res.blob();
+            downloadBlob(blob, `accounting_backup_${todayStr()}.json`, 'application/json');
+            showToast('JSONバックアップをダウンロードしました');
+        } catch (err) {
+            showToast('バックアップに失敗しました', true);
+        } finally {
+            backupJsonBtn.disabled = false;
+            backupJsonBtn.textContent = 'JSONバックアップ';
+        }
+    });
+
+    backupSqliteBtn.addEventListener('click', async () => {
+        try {
+            backupSqliteBtn.disabled = true;
+            backupSqliteBtn.textContent = 'ダウンロード中...';
+            const res = await fetch('/api/backup/download?format=sqlite');
+            const blob = await res.blob();
+            downloadBlob(blob, `accounting_backup_${todayStr()}.db`, 'application/x-sqlite3');
+            showToast('SQLiteバックアップをダウンロードしました');
+        } catch (err) {
+            showToast('バックアップに失敗しました', true);
+        } finally {
+            backupSqliteBtn.disabled = false;
+            backupSqliteBtn.textContent = 'SQLiteダウンロード';
+        }
+    });
+
+    function downloadBlob(blob, filename, mimeType) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // ============================================================
+    //  Section 14: View 8 — アウトプット (Output / Export)
+    // ============================================================
+    const outStartInput = document.getElementById('out-start');
+    const outEndInput = document.getElementById('out-end');
+    const outJournalCsvBtn = document.getElementById('out-journal-csv');
+    const outJournalPdfBtn = document.getElementById('out-journal-pdf');
+    const outTbCsvBtn = document.getElementById('out-tb-csv');
+    const outTbPdfBtn = document.getElementById('out-tb-pdf');
+
+    outStartInput.value = fy.start;
+    outEndInput.value = fy.end;
+
+    // Journal CSV download
+    outJournalCsvBtn.addEventListener('click', async () => {
+        const params = new URLSearchParams();
+        if (outStartInput.value) params.set('start_date', outStartInput.value);
+        if (outEndInput.value) params.set('end_date', outEndInput.value);
+        params.set('format', 'csv');
+
+        try {
+            const res = await fetch('/api/export/journal?' + params.toString());
+            const blob = await res.blob();
+            downloadBlob(blob, `journal_export_${todayStr()}.csv`, 'text/csv');
+            showToast('仕訳帳CSVをダウンロードしました');
+        } catch (err) {
+            showToast('エクスポートに失敗しました', true);
+        }
+    });
+
+    // Journal PDF (print view)
+    outJournalPdfBtn.addEventListener('click', async () => {
+        const params = new URLSearchParams();
+        if (outStartInput.value) params.set('start_date', outStartInput.value);
+        if (outEndInput.value) params.set('end_date', outEndInput.value);
+        params.set('format', 'json');
+
+        try {
+            const data = await fetchAPI('/api/export/journal?' + params.toString());
+            const entries = data.entries || [];
+            openPrintView('仕訳帳', buildJournalPrintTable(entries));
+        } catch (err) {
+            showToast('エクスポートに失敗しました', true);
+        }
+    });
+
+    // Trial Balance CSV
+    outTbCsvBtn.addEventListener('click', async () => {
+        const params = new URLSearchParams();
+        if (outStartInput.value) params.set('start_date', outStartInput.value);
+        if (outEndInput.value) params.set('end_date', outEndInput.value);
+
+        try {
+            const data = await fetchAPI('/api/export/trial-balance?' + params.toString());
+            const balances = data.balances || [];
+            const csv = buildTrialBalanceCsv(balances);
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+            downloadBlob(blob, `trial_balance_${todayStr()}.csv`, 'text/csv');
+            showToast('残高試算表CSVをダウンロードしました');
+        } catch (err) {
+            showToast('エクスポートに失敗しました', true);
+        }
+    });
+
+    // Trial Balance PDF (print view)
+    outTbPdfBtn.addEventListener('click', async () => {
+        const params = new URLSearchParams();
+        if (outStartInput.value) params.set('start_date', outStartInput.value);
+        if (outEndInput.value) params.set('end_date', outEndInput.value);
+
+        try {
+            const data = await fetchAPI('/api/export/trial-balance?' + params.toString());
+            const balances = data.balances || [];
+            openPrintView('残高試算表', buildTrialBalancePrintTable(balances));
+        } catch (err) {
+            showToast('エクスポートに失敗しました', true);
+        }
+    });
+
+    function buildJournalPrintTable(entries) {
+        let html = `<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:11px;">
+            <thead><tr style="background:#f0f0f0;">
+                <th>日付</th><th>借方科目</th><th>貸方科目</th><th style="text-align:right;">金額</th><th>税区分</th><th>取引先</th><th>摘要</th>
+            </tr></thead><tbody>`;
+        entries.forEach(e => {
+            html += `<tr>
+                <td>${e.entry_date || ''}</td>
+                <td>${e.debit_account || ''}</td>
+                <td>${e.credit_account || ''}</td>
+                <td style="text-align:right;">${fmt(e.amount)}</td>
+                <td>${e.tax_classification || ''}</td>
+                <td>${e.counterparty || ''}</td>
+                <td>${e.memo || ''}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function buildTrialBalanceCsv(balances) {
+        let csv = 'コード,勘定科目,科目区分,借方合計,貸方合計,残高\n';
+        balances.forEach(b => {
+            csv += `${b.code},"${b.name}",${b.account_type},${b.debit_total},${b.credit_total},${b.closing_balance}\n`;
+        });
+        return csv;
+    }
+
+    function buildTrialBalancePrintTable(balances) {
+        let html = `<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:11px;">
+            <thead><tr style="background:#f0f0f0;">
+                <th>コード</th><th>勘定科目</th><th>科目区分</th><th style="text-align:right;">借方合計</th><th style="text-align:right;">貸方合計</th><th style="text-align:right;">残高</th>
+            </tr></thead><tbody>`;
+        balances.forEach(b => {
+            html += `<tr>
+                <td>${b.code}</td>
+                <td>${b.name}</td>
+                <td>${b.account_type}</td>
+                <td style="text-align:right;">${fmt(b.debit_total)}</td>
+                <td style="text-align:right;">${fmt(b.credit_total)}</td>
+                <td style="text-align:right;font-weight:bold;">${fmt(b.closing_balance)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function openPrintView(title, tableHtml) {
+        const win = window.open('', '_blank');
+        win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+            <style>body{font-family:sans-serif;padding:20px;}h1{font-size:18px;margin-bottom:10px;}
+            @media print{button{display:none;}}</style>
+        </head><body>
+            <h1>${title}</h1>
+            <p style="font-size:12px;color:#666;">出力日: ${todayStr()}</p>
+            ${tableHtml}
+            <br><button onclick="window.print()" style="padding:8px 16px;font-size:14px;cursor:pointer;">印刷 / PDF保存</button>
+        </body></html>`);
+        win.document.close();
+    }
+
+    // ============================================================
+    //  Section 15: Keyboard Shortcuts
     // ============================================================
     document.addEventListener('keydown', (e) => {
-        // Ctrl+Enter to submit journal form when in Tab 1
+        // Ctrl+Enter to submit journal form when in journal-input view
         if (e.ctrlKey && e.key === 'Enter') {
-            const activePanel = document.querySelector('.tab-panel.active');
-            if (activePanel && activePanel.id === 'tab-journal-input') {
+            const activeView = document.querySelector('.content-view.active');
+            if (activeView && activeView.id === 'view-journal-input') {
                 journalForm.dispatchEvent(new Event('submit'));
             }
+        }
+        // Escape to go back to menu
+        if (e.key === 'Escape' && !settingsModal.classList.contains('hidden')) {
+            settingsModal.classList.add('hidden');
+        } else if (e.key === 'Escape' && !menuGrid.classList.contains('active')) {
+            showMenu();
         }
     });
 });

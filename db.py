@@ -99,6 +99,18 @@ CREATE TABLE IF NOT EXISTS opening_balances (
     UNIQUE(fiscal_year, account_id)
 );
 
+CREATE TABLE IF NOT EXISTS counterparties (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    code            TEXT DEFAULT '',
+    contact_info    TEXT DEFAULT '',
+    notes           TEXT DEFAULT '',
+    is_active       INTEGER DEFAULT 1,
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_counterparties_name ON counterparties(name);
+
 CREATE TABLE IF NOT EXISTS settings (
     key     TEXT PRIMARY KEY,
     value   TEXT NOT NULL
@@ -141,6 +153,15 @@ def init_db():
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (key, value)
             )
+
+        # Migrate existing counterparty strings into new counterparties table
+        cp_count = conn.execute("SELECT COUNT(*) FROM counterparties").fetchone()[0]
+        if cp_count == 0:
+            conn.execute("""
+                INSERT OR IGNORE INTO counterparties (name)
+                SELECT DISTINCT counterparty FROM journal_entries
+                WHERE is_deleted = 0 AND counterparty != ''
+            """)
 
         conn.commit()
         print("Database initialized successfully.")
