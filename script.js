@@ -1199,6 +1199,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function loadCurrentLedgerSubTab() {
+        // If drill-down detail is open, refresh it with new period
+        if (currentDrillAccountId && !ledgerDetail.classList.contains('hidden')) {
+            showAccountDetail(currentDrillAccountId);
+            return;
+        }
         if (currentLedgerSubTab === 'bs-assets') loadBSAssets();
         else if (currentLedgerSubTab === 'bs-liabilities') loadBSLiabilities();
         else if (currentLedgerSubTab === 'profit-loss') loadProfitLoss();
