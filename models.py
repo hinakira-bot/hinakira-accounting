@@ -1400,7 +1400,7 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
       初年度 = 年間償却額 × 使用月数 ÷ 12 (取得月〜12月, 端数切捨て)
       最終年度: 備忘価額1円になるまで
 
-    売却/除却: まず当年分の通常の償却費を計上し、
+    売却/除却: 処分月までの月割り償却費を計上し、
       除却 → 償却後の帳簿価額が除却損
       売却 → 売却額との差額が売却損益（譲渡所得）
 
@@ -1426,9 +1426,11 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
 
         # Parse disposal date if exists
         disp_year = 0
+        disp_month = 12
         if disposal_date and disposal_type:
             disp_parts = disposal_date.split('-')
             disp_year = int(disp_parts[0])
+            disp_month = int(disp_parts[1]) if len(disp_parts) > 1 else 12
 
         # Skip assets acquired after fiscal year end
         if acq_year > fy:
@@ -1480,16 +1482,20 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
 
         # --- Handle disposal in this fiscal year ---
         if disp_year == fy and disposal_type:
-            # Step 1: Calculate normal depreciation for this year first
+            # Step 1: Calculate depreciation up to disposal month (月割り)
             if fy == acq_year:
-                months_used = 12 - acq_month + 1
-                this_year_dep = annual_amount * months_used // 12
+                # Acquired and disposed in the same year
+                months_used = disp_month - acq_month + 1
+                if months_used < 1:
+                    months_used = 1
             else:
-                this_year_dep = annual_amount
+                # 1月〜処分月 (e.g. June disposal = 6 months)
+                months_used = disp_month
+            this_year_dep = annual_amount * months_used // 12
             remaining = depreciable - cumulative_before
             if this_year_dep > remaining:
                 this_year_dep = remaining
-            # Book value after normal depreciation
+            # Book value after prorated depreciation
             bv_after_dep = opening_bv - this_year_dep
 
             if disposal_type == '除却':
