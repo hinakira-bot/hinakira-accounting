@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=40">
+    <link rel="stylesheet" href="style.css?v=41">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -639,6 +639,30 @@
         </div>
     </div>
 
+    <!-- License Activation Overlay -->
+    <div id="license-overlay" class="overlay hidden">
+        <div class="card overlay-card">
+            <h2>ライセンス認証</h2>
+            <p>Hinakira会計を利用するにはライセンスキーが必要です。</p>
+            <div style="margin-top:1.5rem;">
+                <input type="text" id="license-key-input"
+                       class="license-key-input"
+                       placeholder="HINA-XXXX-XXXX-XXXX"
+                       maxlength="19"
+                       style="text-transform:uppercase; text-align:center;
+                              font-family:monospace; font-size:1.1rem;
+                              letter-spacing:0.05em;">
+                <p style="color:var(--text-dim); font-size:0.8rem; margin-top:0.5rem;">
+                    ライセンスキーをお持ちでない場合は、販売元にお問い合わせください。
+                </p>
+            </div>
+            <button id="license-activate-btn" class="btn btn-primary"
+                    style="width:100%; margin-top:1rem;">ライセンスを有効化</button>
+            <button id="license-logout-btn" class="btn btn-ghost"
+                    style="width:100%; margin-top:0.5rem;">ログアウト</button>
+        </div>
+    </div>
+
     <!-- AI Chat -->
     <button id="ai-chat-fab" class="ai-chat-fab" title="AIに相談">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -673,7 +697,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=39"></script>
+    <script src="script.js?v=41"></script>
 </body>
 
 </html>

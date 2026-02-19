@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hinakira会計 - 管理者ダッシュボード</title>
+    <link rel="stylesheet" href="style.css?v=41">
+    <style>
+        body { background: var(--bg); color: var(--text); font-family: var(--font); margin: 0; padding: 0; }
+        .admin-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .admin-header h1 { font-size: 1.2rem; margin: 0; }
+        .admin-container { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+        .admin-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.5rem; }
+        .admin-section h2 { margin-top: 0; font-size: 1.1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+        .gen-form { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
+        .gen-form label { font-size: 0.85rem; color: var(--text-dim); display: block; margin-bottom: 0.25rem; }
+        .gen-form input { padding: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; }
+        .gen-form input[type="number"] { width: 80px; }
+        .gen-form input[type="text"] { width: 200px; }
+        .gen-results { margin-top: 1rem; }
+        .gen-key { font-family: monospace; font-size: 1rem; background: var(--bg); padding: 0.4rem 0.75rem; border-radius: var(--radius); display: inline-block; margin: 0.25rem 0; cursor: pointer; border: 1px solid var(--border); }
+        .gen-key:hover { border-color: var(--primary); }
+        .gen-key.copied { background: #d4edda; border-color: #28a745; }
+        .license-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .license-table th, .license-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+        .license-table th { background: var(--bg); font-weight: 600; position: sticky; top: 0; }
+        .status-unused { color: var(--text-dim); }
+        .status-active { color: #28a745; font-weight: 600; }
+        .status-revoked { color: #dc3545; text-decoration: line-through; }
+        .btn-revoke { padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #dc3545; color: #fff; border: none; border-radius: var(--radius); cursor: pointer; }
+        .btn-revoke:hover { background: #c82333; }
+        .admin-login { text-align: center; margin-top: 4rem; }
+        .admin-login p { color: var(--text-dim); margin-bottom: 1rem; }
+        .admin-error { text-align: center; margin-top: 4rem; color: #dc3545; }
+        .toast { position: fixed; bottom: 2rem; right: 2rem; background: #333; color: #fff; padding: 0.75rem 1.5rem; border-radius: var(--radius); z-index: 9999; opacity: 0; transition: opacity 0.3s; }
+        .toast.show { opacity: 1; }
+    </style>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+    <div id="admin-login" class="admin-login">
+        <h2>管理者ダッシュボード</h2>
+        <p>管理者アカウントでログインしてください</p>
+        <button id="admin-login-btn" class="btn btn-primary">Googleでログイン</button>
+    </div>
+
+    <div id="admin-error" class="admin-error" style="display:none;">
+        <h2>アクセス拒否</h2>
+        <p>管理者権限がありません。</p>
+        <button id="admin-retry-btn" class="btn btn-ghost" style="margin-top:1rem;">別のアカウントでログイン</button>
+    </div>
+
+    <div id="admin-app" style="display:none;">
+        <div class="admin-header">
+            <h1>Hinakira会計 管理者ダッシュボード</h1>
+            <div>
+                <span id="admin-user" style="font-size:0.85rem; color:var(--text-dim); margin-right:1rem;"></span>
+                <button id="admin-logout-btn" class="btn btn-ghost" style="padding:0.3rem 0.75rem; font-size:0.8rem;">ログアウト</button>
+            </div>
+        </div>
+
+        <div class="admin-container">
+            <!-- Key Generation -->
+            <div class="admin-section">
+                <h2>ライセンスキー生成</h2>
+                <div class="gen-form">
+                    <div>
+                        <label>生成数</label>
+                        <input type="number" id="gen-count" value="1" min="1" max="100">
+                    </div>
+                    <div>
+                        <label>メモ（任意）</label>
+                        <input type="text" id="gen-notes" placeholder="例: 初期販売用">
+                    </div>
+                    <button id="gen-btn" class="btn btn-primary">生成</button>
+                </div>
+                <div id="gen-results" class="gen-results"></div>
+            </div>
+
+            <!-- License List -->
+            <div class="admin-section">
+                <h2>ライセンス一覧</h2>
+                <div style="overflow-x:auto;">
+                    <table class="license-table">
+                        <thead>
+                            <tr>
+                                <th>ライセンスキー</th>
+                                <th>ステータス</th>
+                                <th>利用者</th>
+                                <th>有効化日</th>
+                                <th>メモ</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="licenses-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+    (function() {
+        const CLIENT_ID = '353694435064-r6mlbk3mm2mflhl2mot2n94dpuactscc.apps.googleusercontent.com';
+        let accessToken = null;
+        let tokenClient = null;
+
+        const loginDiv = document.getElementById('admin-login');
+        const errorDiv = document.getElementById('admin-error');
+        const appDiv = document.getElementById('admin-app');
+        const toastEl = document.getElementById('toast');
+
+        function showToast(msg) {
+            toastEl.textContent = msg;
+            toastEl.classList.add('show');
+            setTimeout(() => toastEl.classList.remove('show'), 2500);
+        }
+
+        async function fetchAdmin(url, method = 'GET', body = null) {
+            const opts = { method, headers: { 'Authorization': 'Bearer ' + accessToken }, cache: 'no-store' };
+            if (body) {
+                opts.headers['Content-Type'] = 'application/json';
+                opts.body = JSON.stringify(body);
+            }
+            const res = await fetch(url, opts);
+            if (res.status === 401) {
+                loginDiv.style.display = '';
+                appDiv.style.display = 'none';
+                errorDiv.style.display = 'none';
+                throw new Error('Unauthorized');
+            }
+            if (res.status === 403) {
+                loginDiv.style.display = 'none';
+                appDiv.style.display = 'none';
+                errorDiv.style.display = '';
+                throw new Error('Forbidden');
+            }
+            return res.json();
+        }
+
+        async function loadLicenses() {
+            try {
+                const data = await fetchAdmin('/api/admin/licenses');
+                const tbody = document.getElementById('licenses-tbody');
+                tbody.innerHTML = '';
+                data.forEach(lic => {
+                    const tr = document.createElement('tr');
+                    let status, statusClass;
+                    if (lic.is_revoked) {
+                        status = '無効化';
+                        statusClass = 'status-revoked';
+                    } else if (lic.user_email) {
+                        status = '有効';
+                        statusClass = 'status-active';
+                    } else {
+                        status = '未使用';
+                        statusClass = 'status-unused';
+                    }
+                    tr.innerHTML = `
+                        <td><span class="gen-key" onclick="navigator.clipboard.writeText('${lic.license_key}').then(()=>this.classList.add('copied'))">${lic.license_key}</span></td>
+                        <td><span class="${statusClass}">${status}</span></td>
+                        <td>${lic.user_email || '-'}</td>
+                        <td>${lic.activated_at ? new Date(lic.activated_at).toLocaleDateString('ja-JP') : '-'}</td>
+                        <td>${lic.notes || '-'}</td>
+                        <td>${!lic.is_revoked ? '<button class="btn-revoke" data-id="' + lic.id + '">無効化</button>' : '-'}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                // Revoke handlers
+                tbody.querySelectorAll('.btn-revoke').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        if (!confirm('このライセンスを無効化しますか？')) return;
+                        await fetchAdmin('/api/admin/licenses/revoke', 'POST', { license_key_id: parseInt(btn.dataset.id) });
+                        showToast('ライセンスを無効化しました');
+                        loadLicenses();
+                    });
+                });
+            } catch (e) {
+                console.error('Load licenses error:', e);
+            }
+        }
+
+        async function onAdminLogin(token) {
+            accessToken = token;
+            try {
+                const me = await fetchAdmin('/api/me');
+                document.getElementById('admin-user').textContent = me.email || '';
+                // Try to access admin API to verify admin rights
+                await fetchAdmin('/api/admin/licenses');
+                loginDiv.style.display = 'none';
+                errorDiv.style.display = 'none';
+                appDiv.style.display = '';
+                loadLicenses();
+            } catch (e) {
+                // fetchAdmin already handles 403
+            }
+        }
+
+        // Google OAuth init
+        function initGoogleAuth() {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: 'openid email profile',
+                callback: (resp) => {
+                    if (resp.access_token) {
+                        onAdminLogin(resp.access_token);
+                    }
+                }
+            });
+        }
+
+        // Wait for Google script to load
+        const gsiCheck = setInterval(() => {
+            if (window.google && google.accounts) {
+                clearInterval(gsiCheck);
+                initGoogleAuth();
+            }
+        }, 200);
+
+        document.getElementById('admin-login-btn').addEventListener('click', () => {
+            if (tokenClient) tokenClient.requestAccessToken();
+        });
+        document.getElementById('admin-retry-btn').addEventListener('click', () => {
+            errorDiv.style.display = 'none';
+            loginDiv.style.display = '';
+            if (tokenClient) tokenClient.requestAccessToken();
+        });
+        document.getElementById('admin-logout-btn').addEventListener('click', () => {
+            accessToken = null;
+            appDiv.style.display = 'none';
+            loginDiv.style.display = '';
+        });
+
+        // Generate keys
+        document.getElementById('gen-btn').addEventListener('click', async () => {
+            const count = parseInt(document.getElementById('gen-count').value) || 1;
+            const notes = document.getElementById('gen-notes').value.trim();
+            const btn = document.getElementById('gen-btn');
+            btn.disabled = true;
+            btn.textContent = '生成中...';
+            try {
+                const results = await fetchAdmin('/api/admin/licenses/generate', 'POST', { count, notes });
+                const div = document.getElementById('gen-results');
+                div.innerHTML = '<p style="font-size:0.85rem; color:var(--text-dim); margin-bottom:0.5rem;">クリックでコピー:</p>';
+                results.forEach(r => {
+                    if (r.license_key) {
+                        const span = document.createElement('span');
+                        span.className = 'gen-key';
+                        span.textContent = r.license_key;
+                        span.onclick = () => {
+                            navigator.clipboard.writeText(r.license_key).then(() => {
+                                span.classList.add('copied');
+                                showToast('コピーしました: ' + r.license_key);
+                                setTimeout(() => span.classList.remove('copied'), 1500);
+                            });
+                        };
+                        div.appendChild(span);
+                        div.appendChild(document.createElement('br'));
+                    }
+                });
+                loadLicenses();
+            } catch (e) {
+                showToast('生成エラー');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '生成';
+            }
+        });
+    })();
+    </script>
+</body>
+</html>

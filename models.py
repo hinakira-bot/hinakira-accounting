@@ -4,6 +4,8 @@ CRUD operations for journal entries, accounts, trial balance, etc.
 All user-scoped functions require user_id parameter.
 """
 import math
+import secrets
+import string
 from db import get_db, P, USE_PG
 
 # --- DB dialect helpers ---
@@ -1084,5 +1086,174 @@ def upsert_statement_source(user_id: int, source_name: str,
     except Exception as e:
         print(f"Statement source upsert error: {e}")
         conn.rollback()
+    finally:
+        conn.close()
+
+
+# ============================
+#  License Key Management
+# ============================
+
+def generate_license_key() -> str:
+    """Generate a HINA-XXXX-XXXX-XXXX format license key."""
+    chars = string.ascii_uppercase + string.digits
+    segments = [''.join(secrets.choice(chars) for _ in range(4)) for _ in range(3)]
+    return f"HINA-{segments[0]}-{segments[1]}-{segments[2]}"
+
+
+def create_license_key(created_by: str = '', notes: str = '') -> dict:
+    """Create a single license key and store in DB."""
+    conn = get_db()
+    try:
+        key = generate_license_key()
+        if USE_PG:
+            row = conn.execute(
+                "INSERT INTO license_keys (license_key, created_by, notes) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                (key, created_by, notes)
+            ).fetchone()
+            key_id = row['id']
+        else:
+            cur = conn.execute(
+                "INSERT INTO license_keys (license_key, created_by, notes) VALUES (?, ?, ?)",
+                (key, created_by, notes)
+            )
+            key_id = cur.lastrowid
+        conn.commit()
+        return {"id": key_id, "license_key": key}
+    except Exception as e:
+        conn.rollback()
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+
+def create_license_keys_batch(count: int, created_by: str = '', notes: str = '') -> list:
+    """Generate multiple license keys at once."""
+    results = []
+    for _ in range(min(count, 100)):
+        result = create_license_key(created_by, notes)
+        results.append(result)
+    return results
+
+
+def activate_license(license_key_str: str, user_id: int, user_email: str) -> dict:
+    """Activate a license key for a user."""
+    conn = get_db()
+    try:
+        # 1. Find the key
+        row = conn.execute(
+            P("SELECT id, is_revoked FROM license_keys WHERE license_key = ?"),
+            (license_key_str,)
+        ).fetchone()
+        if not row:
+            return {"error": "無効なライセンスキーです"}
+        key_id = row['id'] if USE_PG else row[0]
+        is_revoked = row['is_revoked'] if USE_PG else row[1]
+        if is_revoked:
+            return {"error": "このライセンスキーは無効化されています"}
+
+        # 2. Check if key is already used by another user
+        existing = conn.execute(
+            P("SELECT user_id FROM license_activations WHERE license_key_id = ? AND is_active = 1"),
+            (key_id,)
+        ).fetchone()
+        if existing:
+            existing_uid = existing['user_id'] if USE_PG else existing[0]
+            if existing_uid != user_id:
+                return {"error": "このライセンスキーは既に使用されています"}
+            else:
+                return {"status": "success", "message": "既に有効化済みです"}
+
+        # 3. Check if user already has an active license
+        user_lic = conn.execute(
+            P("SELECT id FROM license_activations WHERE user_id = ? AND is_active = 1"),
+            (user_id,)
+        ).fetchone()
+        if user_lic:
+            return {"error": "既にライセンスが有効化されています"}
+
+        # 4. Activate
+        if USE_PG:
+            conn.execute(
+                "INSERT INTO license_activations (license_key_id, user_id, user_email) "
+                "VALUES (%s, %s, %s)",
+                (key_id, user_id, user_email)
+            )
+        else:
+            conn.execute(
+                "INSERT INTO license_activations (license_key_id, user_id, user_email) "
+                "VALUES (?, ?, ?)",
+                (key_id, user_id, user_email)
+            )
+        conn.commit()
+        return {"status": "success", "message": "ライセンスが有効化されました"}
+    except Exception as e:
+        conn.rollback()
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+
+def check_user_license(user_id: int) -> bool:
+    """Check if a user has an active license."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            P("""SELECT la.id FROM license_activations la
+                JOIN license_keys lk ON la.license_key_id = lk.id
+                WHERE la.user_id = ? AND la.is_active = 1 AND lk.is_revoked = 0"""),
+            (user_id,)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
+def get_all_license_keys() -> list:
+    """Get all license keys with activation info (admin)."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            P("""SELECT lk.id, lk.license_key, lk.created_at, lk.created_by,
+                    lk.is_revoked, lk.notes,
+                    la.user_email, la.activated_at, la.is_active
+                FROM license_keys lk
+                LEFT JOIN license_activations la ON lk.id = la.license_key_id
+                ORDER BY lk.id DESC""")
+        ).fetchall()
+        result = []
+        for r in rows:
+            if USE_PG:
+                result.append(dict(r))
+            else:
+                result.append({
+                    'id': r[0], 'license_key': r[1], 'created_at': r[2],
+                    'created_by': r[3], 'is_revoked': r[4], 'notes': r[5],
+                    'user_email': r[6], 'activated_at': r[7], 'is_active': r[8]
+                })
+        return result
+    finally:
+        conn.close()
+
+
+def revoke_license(license_key_id: int) -> dict:
+    """Revoke a license key (admin)."""
+    _now = "CURRENT_TIMESTAMP" if USE_PG else "datetime('now')"
+    conn = get_db()
+    try:
+        conn.execute(
+            P(f"UPDATE license_keys SET is_revoked = 1, revoked_at = {_now} WHERE id = ?"),
+            (license_key_id,)
+        )
+        conn.execute(
+            P(f"UPDATE license_activations SET is_active = 0, deactivated_at = {_now} WHERE license_key_id = ?"),
+            (license_key_id,)
+        )
+        conn.commit()
+        return {"status": "success"}
+    except Exception as e:
+        conn.rollback()
+        return {"error": str(e)}
     finally:
         conn.close()

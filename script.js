@@ -131,6 +131,19 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // License check
+        try {
+            const licStatus = await fetchAPI('/api/license/status');
+            if (licStatus && !licStatus.has_license) {
+                showLicenseOverlay();
+                return;
+            }
+        } catch (e) {
+            console.warn('License check failed:', e.message);
+            return;
+        }
+        hideLicenseOverlay();
+
         // Load API key: prefer server-side setting, fall back to localStorage
         try {
             const settings = await fetchAPI('/api/settings');
@@ -276,6 +289,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (userDisplay) userDisplay.classList.add('hidden');
             }
             throw new Error('Unauthorized');
+        }
+        if (res.status === 403) {
+            const data = await res.json();
+            if (data.code === 'LICENSE_REQUIRED') {
+                showLicenseOverlay();
+                throw new Error('License required');
+            }
         }
         if (!res.ok) {
             console.error(`API error: ${res.status} ${res.statusText} for ${url}`);
@@ -3359,6 +3379,66 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     });
+
+    // ============================================================
+    //  Section: License Activation
+    // ============================================================
+    const licenseOverlay = document.getElementById('license-overlay');
+    const licenseKeyInput = document.getElementById('license-key-input');
+    const licenseActivateBtn = document.getElementById('license-activate-btn');
+    const licenseLogoutBtn = document.getElementById('license-logout-btn');
+
+    function showLicenseOverlay() {
+        if (licenseOverlay) licenseOverlay.classList.remove('hidden');
+    }
+    function hideLicenseOverlay() {
+        if (licenseOverlay) licenseOverlay.classList.add('hidden');
+    }
+
+    if (licenseActivateBtn) {
+        licenseActivateBtn.addEventListener('click', async () => {
+            const key = (licenseKeyInput.value || '').trim().toUpperCase();
+            if (!key) {
+                showToast('ライセンスキーを入力してください', true);
+                return;
+            }
+            licenseActivateBtn.disabled = true;
+            licenseActivateBtn.textContent = '確認中...';
+            try {
+                const res = await fetchAPI('/api/license/activate', 'POST', { license_key: key });
+                if (res.status === 'success') {
+                    showToast('ライセンスが有効化されました！');
+                    hideLicenseOverlay();
+                    licenseKeyInput.value = '';
+                    // Reload app data
+                    onLoginSuccess();
+                } else {
+                    showToast(res.error || 'ライセンスの有効化に失敗しました', true);
+                }
+            } catch (e) {
+                if (e.message !== 'License required') {
+                    showToast('エラーが発生しました', true);
+                }
+            } finally {
+                licenseActivateBtn.disabled = false;
+                licenseActivateBtn.textContent = 'ライセンスを有効化';
+            }
+        });
+    }
+
+    if (licenseLogoutBtn) {
+        licenseLogoutBtn.addEventListener('click', () => {
+            hideLicenseOverlay();
+            handleLogout();
+        });
+    }
+
+    // Allow Enter key to activate license
+    if (licenseKeyInput) {
+        licenseKeyInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && licenseActivateBtn) licenseActivateBtn.click();
+        });
+    }
 
     // ============================================================
     //  Initial route from hash (must be at end after all declarations)

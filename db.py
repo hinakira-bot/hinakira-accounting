@@ -159,6 +159,30 @@ PG_SCHEMA_STATEMENTS = [
         updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_statement_sources_unique ON statement_sources(user_id, source_name)",
+    # --- License tables ---
+    """CREATE TABLE IF NOT EXISTS license_keys (
+        id              SERIAL PRIMARY KEY,
+        license_key     TEXT UNIQUE NOT NULL,
+        created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by      TEXT DEFAULT '',
+        is_revoked      INTEGER DEFAULT 0,
+        revoked_at      TIMESTAMP,
+        notes           TEXT DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_license_keys_key ON license_keys(license_key)",
+    """CREATE TABLE IF NOT EXISTS license_activations (
+        id              SERIAL PRIMARY KEY,
+        license_key_id  INTEGER NOT NULL,
+        user_id         INTEGER NOT NULL,
+        user_email      TEXT NOT NULL,
+        activated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_active       INTEGER DEFAULT 1,
+        deactivated_at  TIMESTAMP,
+        FOREIGN KEY (license_key_id) REFERENCES license_keys(id),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_license_activations_user ON license_activations(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_license_activations_key ON license_activations(license_key_id)",
 ]
 
 # --- Schema (SQLite — kept for local dev) ---
@@ -258,6 +282,29 @@ CREATE TABLE IF NOT EXISTS statement_sources (
     updated_at      TEXT DEFAULT (datetime('now'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_statement_sources_unique ON statement_sources(user_id, source_name);
+CREATE TABLE IF NOT EXISTS license_keys (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    license_key     TEXT UNIQUE NOT NULL,
+    created_at      TEXT DEFAULT (datetime('now')),
+    created_by      TEXT DEFAULT '',
+    is_revoked      INTEGER DEFAULT 0,
+    revoked_at      TEXT,
+    notes           TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_license_keys_key ON license_keys(license_key);
+CREATE TABLE IF NOT EXISTS license_activations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    license_key_id  INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    user_email      TEXT NOT NULL,
+    activated_at    TEXT DEFAULT (datetime('now')),
+    is_active       INTEGER DEFAULT 1,
+    deactivated_at  TEXT,
+    FOREIGN KEY (license_key_id) REFERENCES license_keys(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_license_activations_user ON license_activations(user_id);
+CREATE INDEX IF NOT EXISTS idx_license_activations_key ON license_activations(license_key_id);
 """
 
 
@@ -423,6 +470,43 @@ def migrate_db():
                     updated_at TEXT DEFAULT (datetime('now')))""")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_statement_sources_unique ON statement_sources(user_id, source_name)")
             print("Migration: Created statement_sources table.")
+
+        if not _table_exists(conn, 'license_keys'):
+            if USE_PG:
+                cur.execute("""CREATE TABLE IF NOT EXISTS license_keys (
+                    id SERIAL PRIMARY KEY, license_key TEXT UNIQUE NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT DEFAULT '', is_revoked INTEGER DEFAULT 0,
+                    revoked_at TIMESTAMP, notes TEXT DEFAULT '')""")
+            else:
+                cur.execute("""CREATE TABLE IF NOT EXISTS license_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, license_key TEXT UNIQUE NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    created_by TEXT DEFAULT '', is_revoked INTEGER DEFAULT 0,
+                    revoked_at TEXT, notes TEXT DEFAULT '')""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_license_keys_key ON license_keys(license_key)")
+            print("Migration: Created license_keys table.")
+
+        if not _table_exists(conn, 'license_activations'):
+            if USE_PG:
+                cur.execute("""CREATE TABLE IF NOT EXISTS license_activations (
+                    id SERIAL PRIMARY KEY, license_key_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL, user_email TEXT NOT NULL,
+                    activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active INTEGER DEFAULT 1, deactivated_at TIMESTAMP,
+                    FOREIGN KEY (license_key_id) REFERENCES license_keys(id),
+                    FOREIGN KEY (user_id) REFERENCES users(id))""")
+            else:
+                cur.execute("""CREATE TABLE IF NOT EXISTS license_activations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, license_key_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL, user_email TEXT NOT NULL,
+                    activated_at TEXT DEFAULT (datetime('now')),
+                    is_active INTEGER DEFAULT 1, deactivated_at TEXT,
+                    FOREIGN KEY (license_key_id) REFERENCES license_keys(id),
+                    FOREIGN KEY (user_id) REFERENCES users(id))""")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_license_activations_user ON license_activations(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_license_activations_key ON license_activations(license_key_id)")
+            print("Migration: Created license_activations table.")
 
         conn.commit()
         print("Migration completed successfully.")

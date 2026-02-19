@@ -18,6 +18,11 @@ import models
 
 load_dotenv()
 
+# Admin emails for license management (comma-separated)
+ADMIN_EMAILS = set(
+    e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()
+)
+
 print("=== Hinakira Accounting Starting ===", flush=True)
 print(f"Python version: {__import__('sys').version}", flush=True)
 print(f"Working directory: {os.getcwd()}", flush=True)
@@ -123,7 +128,7 @@ def get_current_user():
 
 @app.before_request
 def require_auth():
-    """Require authentication for API endpoints (except static files and drive APIs)."""
+    """Require authentication for API endpoints. License check for non-admin users."""
     path = request.path
 
     # Static files don't need auth
@@ -134,11 +139,34 @@ def require_auth():
     if path.startswith('/api/drive/'):
         return None
 
-    # Accounts API is global (no user-scoping needed, but still require login)
-    # All other APIs need user identification
+    # License & me endpoints: auth only (no license check — needed during activation)
+    if path.startswith('/api/license/') or path == '/api/me':
+        user = get_current_user()
+        if not user:
+            return jsonify({"error": "認証が必要です。再ログインしてください。"}), 401
+        return None
+
+    # Admin endpoints: auth + admin check (no license needed)
+    if path.startswith('/api/admin/'):
+        user = get_current_user()
+        if not user:
+            return jsonify({"error": "認証が必要です。再ログインしてください。"}), 401
+        if user.get('email', '').lower() not in ADMIN_EMAILS:
+            return jsonify({"error": "管理者権限が必要です"}), 403
+        return None
+
+    # All other APIs: auth + license check
     user = get_current_user()
     if not user:
         return jsonify({"error": "認証が必要です。再ログインしてください。"}), 401
+
+    # Admins skip license check
+    if user.get('email', '').lower() in ADMIN_EMAILS:
+        return None
+
+    # License check for regular users
+    if not models.check_user_license(user['id']):
+        return jsonify({"error": "ライセンスが必要です", "code": "LICENSE_REQUIRED"}), 403
 
 
 def get_user_id():
@@ -1246,6 +1274,78 @@ def api_export_ledger():
                 'entries': ledger.get('entries', [])
             })
     return jsonify({"accounts": result})
+
+
+# ============================
+#  License API (user-facing)
+# ============================
+@app.route('/api/license/status', methods=['GET'])
+def api_license_status():
+    """Check current user's license status."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    # Admins always have access
+    is_admin = user.get('email', '').lower() in ADMIN_EMAILS
+    has_license = is_admin or models.check_user_license(user['id'])
+    return jsonify({"has_license": has_license, "is_admin": is_admin})
+
+
+@app.route('/api/license/activate', methods=['POST'])
+def api_license_activate():
+    """Activate a license key for the current user."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    data = request.json or {}
+    key = (data.get('license_key') or '').strip().upper()
+    if not key:
+        return jsonify({"error": "ライセンスキーを入力してください"}), 400
+    result = models.activate_license(key, user['id'], user['email'])
+    if result.get('error'):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+# ============================
+#  Admin API (license management)
+# ============================
+@app.route('/api/admin/licenses', methods=['GET'])
+def api_admin_licenses():
+    """List all license keys (admin only)."""
+    return jsonify(models.get_all_license_keys())
+
+
+@app.route('/api/admin/licenses/generate', methods=['POST'])
+def api_admin_generate():
+    """Generate new license keys (admin only)."""
+    user = get_current_user()
+    data = request.json or {}
+    count = min(int(data.get('count', 1)), 100)
+    notes = data.get('notes', '')
+    results = models.create_license_keys_batch(count, user.get('email', ''), notes)
+    return jsonify(results)
+
+
+@app.route('/api/admin/licenses/revoke', methods=['POST'])
+def api_admin_revoke():
+    """Revoke a license key (admin only)."""
+    data = request.json or {}
+    key_id = data.get('license_key_id')
+    if not key_id:
+        return jsonify({"error": "license_key_id is required"}), 400
+    result = models.revoke_license(int(key_id))
+    if result.get('error'):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+# ============================
+#  Admin Page Route
+# ============================
+@app.route('/admin')
+def admin_page():
+    return send_from_directory('.', 'admin.html')
 
 
 # ============================

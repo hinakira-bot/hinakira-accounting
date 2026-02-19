@@ -1926,3 +1926,18 @@ tr.pl-subtotal td { border-top: 1px solid #c7d2fe; color: #1e3a8a; }
     .ai-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 84px; }
     .ai-chat-fab { bottom: 16px; right: 16px; }
 }
+
+/* License Key Input */
+.license-key-input {
+    width: 100%;
+    padding: 0.75rem;
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 1.1rem;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+.license-key-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
