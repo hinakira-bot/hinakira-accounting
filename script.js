@@ -576,14 +576,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- Recent Entries (below form) ---
+    let recentEntriesCache = [];
+
     function loadRecentEntries() {
         fetchAPI('/api/journal/recent?limit=10').then(data => {
+            const entries = data.entries || [];
+            recentEntriesCache = entries;
             const tbody = document.getElementById('recent-tbody');
             if (!tbody) return;
-            tbody.innerHTML = (data.entries || []).map(e => {
+            tbody.innerHTML = entries.map(e => {
                 const parsed = parseTaxClassification(e.tax_classification);
                 return `
-                <tr>
+                <tr data-id="${e.id}">
                     <td>${e.entry_date || ''}</td>
                     <td>${parsed.taxCategory || ''}</td>
                     <td>${e.debit_account || ''}</td>
@@ -596,6 +600,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td><button class="btn-row-delete" data-id="${e.id}" title="削除">✕</button></td>
                 </tr>`;
             }).join('');
+
+            // Attach row click → open edit modal
+            tbody.querySelectorAll('tr').forEach(row => {
+                row.addEventListener('click', (ev) => {
+                    // Skip if delete button or evidence link was clicked
+                    if (ev.target.closest('.btn-row-delete') || ev.target.closest('.evidence-link')) return;
+                    const id = row.dataset.id;
+                    const entry = recentEntriesCache.find(en => String(en.id) === String(id));
+                    if (entry) openJEDetailModal(entry, loadRecentEntries);
+                });
+            });
 
             // Attach delete handlers
             tbody.querySelectorAll('.btn-row-delete').forEach(btn => {

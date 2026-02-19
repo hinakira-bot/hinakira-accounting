@@ -703,6 +703,7 @@ body {
     overflow: hidden;
     border: 2px solid #2563eb;
     box-shadow: 0 4px 24px rgba(37,99,235,0.15), 0 1px 4px rgba(0,0,0,0.06);
+    margin-bottom: 1.75rem;
 }
 .evidence-link {
     text-decoration: none;
@@ -732,12 +733,12 @@ body {
     align-items: center;
     flex-wrap: wrap;
     gap: 0.25rem 0.75rem;
-    padding: 0.875rem 1.125rem;
+    padding: 1.125rem 1.25rem;
     background: linear-gradient(135deg, #1e3a8a, #2563eb);
     color: #fff;
 }
 .je-title {
-    font-size: 0.9375rem;
+    font-size: 1.0625rem;
     font-weight: 600;
     color: #fff;
     margin: 0;
@@ -785,7 +786,7 @@ body {
 }
 .je-input-table .je-th {
     text-align: left;
-    padding: 0.4375rem 0.5rem;
+    padding: 0.625rem 0.5rem;
     font-size: 0.6875rem;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -799,7 +800,7 @@ body {
 
 /* Input row */
 .je-input-row td {
-    padding: 0.375rem 0.25rem;
+    padding: 0.625rem 0.375rem;
     border-bottom: 1px solid #e2e8f0;
     border-right: 1px solid #f1f5f9;
     vertical-align: middle;
@@ -810,7 +811,7 @@ body {
 .je-input-row input,
 .je-input-row select {
     width: 100%;
-    padding: 0.5rem 0.5rem;
+    padding: 0.625rem 0.5rem;
     border: 1px solid #e2e8f0;
     border-radius: 4px;
     font-family: inherit;
@@ -850,7 +851,7 @@ body {
 .btn-je-submit {
     display: block;
     width: 100%;
-    padding: 0.5rem 0.625rem;
+    padding: 0.625rem 0.625rem;
     background: linear-gradient(135deg, #2563eb, #1d4ed8);
     color: #fff;
     border: none;
@@ -866,6 +867,15 @@ body {
 }
 .btn-je-submit:hover { background: linear-gradient(135deg, #1d4ed8, #1e40af); box-shadow: 0 3px 10px rgba(37,99,235,0.4); }
 .btn-je-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Recent entries: clickable rows */
+#recent-tbody tr {
+    cursor: pointer;
+    transition: background 0.12s;
+}
+#recent-tbody tr:hover {
+    background: #eef2ff;
+}
 
 /* Help button (?) + tooltip */
 .help-btn {
