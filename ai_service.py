@@ -298,13 +298,16 @@ def estimate_useful_life(asset_name: str, user_id: int = 0) -> dict:
                     response = model.generate_content(prompt, tools=search_tool)
                 else:
                     response = model.generate_content(prompt)
-                break
+                # Verify we got a valid text response
+                if response and response.text:
+                    break
             except Exception as tool_err:
                 print(f"Search grounding attempt ({search_tool}): {tool_err}")
+                response = None
                 continue
         if response is None:
             response = model.generate_content(prompt)
-        text = response.text.strip()
+        text = (response.text or '').strip()
         # Clean JSON
         if "```json" in text:
             text = text.split("```json")[-1].split("```")[0].strip()
@@ -317,8 +320,10 @@ def estimate_useful_life(asset_name: str, user_id: int = 0) -> dict:
         result = json.loads(text)
         return result
     except Exception as e:
+        import traceback
         print(f"AI useful life estimation error: {e}")
-        return {"useful_life": 4, "asset_category": "不明", "reasoning": "AI判定エラー。デフォルト4年を設定。"}
+        traceback.print_exc()
+        return {"useful_life": 4, "asset_category": "器具備品", "reasoning": f"AI判定エラー（{str(e)[:50]}）。デフォルト4年を設定。"}
 
 
 def clean_json(text: str) -> str:
