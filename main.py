@@ -7,6 +7,7 @@ import os
 import io
 import json
 import time
+import threading
 import requests as http_requests
 from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
@@ -35,15 +36,23 @@ _TOKEN_CACHE_TTL = 300  # 5 minutes
 app = Flask(__name__, static_folder='.', static_url_path='/static')
 CORS(app)
 
-# Initialize database on startup (includes migration for existing DBs)
-try:
-    print(f"DB_PATH will be: {db.DB_PATH}", flush=True)
-    db.init_db()
-    print("Database initialized successfully", flush=True)
-except Exception as e:
-    print(f"CRITICAL: Database initialization failed: {e}", flush=True)
-    import traceback
-    traceback.print_exc()
+# Initialize database in background thread (non-blocking so gunicorn can accept health checks)
+_db_ready = False
+
+def _init_db_background():
+    global _db_ready
+    try:
+        print(f"DB_PATH will be: {db.DB_PATH}", flush=True)
+        db.init_db()
+        _db_ready = True
+        print("Database initialized successfully", flush=True)
+    except Exception as e:
+        print(f"CRITICAL: Database initialization failed: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        _db_ready = True  # Mark ready so app doesn't hang; errors surface on API calls
+
+threading.Thread(target=_init_db_background, daemon=True).start()
 
 
 # ============================

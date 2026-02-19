@@ -345,7 +345,7 @@ def get_db():
     if USE_PG:
         import psycopg2
         import psycopg2.extras
-        raw = psycopg2.connect(DATABASE_URL)
+        raw = psycopg2.connect(DATABASE_URL, connect_timeout=10)
         raw.autocommit = False
         # Use RealDictCursor so rows are dicts (like sqlite3.Row)
         raw.cursor_factory = psycopg2.extras.RealDictCursor
