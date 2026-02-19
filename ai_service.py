@@ -1,17 +1,29 @@
 """
 AI analysis service using Gemini for receipt/CSV/document analysis.
 Extracted from main.py for modularity.
+All heavy imports (google.generativeai, PIL) are lazy-loaded inside functions
+to reduce startup memory on Render (512MB Starter plan).
 """
 import json
 import io
 import csv
-import google.generativeai as genai
-from PIL import Image
+
+# genai and PIL are imported lazily inside functions that need them
+_genai = None
+
+
+def _get_genai():
+    """Lazy-load google.generativeai."""
+    global _genai
+    if _genai is None:
+        import google.generativeai as genai
+        _genai = genai
+    return _genai
 
 
 def configure_gemini(api_key: str):
     """Configure Gemini API with the given key."""
-    genai.configure(api_key=api_key)
+    _get_genai().configure(api_key=api_key)
 
 
 def get_analysis_prompt(history_str: str, input_text_or_type: str) -> str:
@@ -63,6 +75,7 @@ def analyze_csv(csv_bytes: bytes, history: list = None) -> list:
         history = []
     print("Analyzing CSV...")
     try:
+        genai = _get_genai()
         text = csv_bytes.decode('shift_jis', errors='replace')
         if '確定日' not in text and '利用日' not in text and ',' not in text:
             text = csv_bytes.decode('utf-8', errors='replace')
@@ -90,6 +103,8 @@ def analyze_document(file_bytes: bytes, mime_type: str, history: list = None) ->
     if history is None:
         history = []
     print(f"Analyzing {mime_type}...")
+    genai = _get_genai()
+    from PIL import Image
     models = ['gemini-2.5-flash', 'gemini-2.0-flash']
     history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
 
@@ -115,6 +130,7 @@ def analyze_document(file_bytes: bytes, mime_type: str, history: list = None) ->
 def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api_key: str) -> list:
     """Predict debit/credit accounts, tax category, and tax rate for entries using AI."""
     configure_gemini(gemini_api_key)
+    genai = _get_genai()
 
     history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
     valid_accounts_str = ", ".join(valid_accounts)
