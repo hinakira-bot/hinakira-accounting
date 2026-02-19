@@ -858,6 +858,104 @@ def _resolve_account_id(conn, account_id=None, account_name=None) -> int:
 
 
 # ============================================================
+#  Blue Return Tax Form (青色申告決算書) — Monthly Summary
+# ============================================================
+
+def get_monthly_summary(fiscal_year: str, user_id: int = 0) -> dict:
+    """Get monthly revenue/expense breakdown for 青色申告決算書 page 2.
+    Returns dict with:
+      monthly: list of 12 dicts {month, revenue, purchases, expenses_by_account}
+      annual:  totals for the year
+    """
+    conn = get_db()
+    try:
+        fy_start = f"{fiscal_year}-01-01"
+        fy_end = f"{fiscal_year}-12-31"
+
+        # Monthly revenue (売上) by month
+        revenue_sql = """
+        SELECT strftime('%m', je.entry_date) AS month,
+               SUM(je.amount) AS total
+        FROM journal_entries je
+        JOIN accounts_master am ON je.credit_account_id = am.id
+        WHERE je.is_deleted = 0 AND je.user_id = ?
+          AND je.entry_date >= ? AND je.entry_date <= ?
+          AND am.account_type = '収益'
+        GROUP BY strftime('%m', je.entry_date)
+        """
+        rev_rows = conn.execute(revenue_sql, (user_id, fy_start, fy_end)).fetchall()
+        rev_by_month = {int(r['month']): r['total'] for r in rev_rows}
+
+        # Monthly purchases (仕入) by month — code 500
+        purchase_sql = """
+        SELECT strftime('%m', je.entry_date) AS month,
+               SUM(je.amount) AS total
+        FROM journal_entries je
+        JOIN accounts_master am ON je.debit_account_id = am.id
+        WHERE je.is_deleted = 0 AND je.user_id = ?
+          AND je.entry_date >= ? AND je.entry_date <= ?
+          AND am.code = '500'
+        GROUP BY strftime('%m', je.entry_date)
+        """
+        pur_rows = conn.execute(purchase_sql, (user_id, fy_start, fy_end)).fetchall()
+        pur_by_month = {int(r['month']): r['total'] for r in pur_rows}
+
+        # Monthly expense totals by account (for page 1 detail)
+        expense_sql = """
+        SELECT am.code, am.name,
+               strftime('%m', je.entry_date) AS month,
+               SUM(je.amount) AS total
+        FROM journal_entries je
+        JOIN accounts_master am ON je.debit_account_id = am.id
+        WHERE je.is_deleted = 0 AND je.user_id = ?
+          AND je.entry_date >= ? AND je.entry_date <= ?
+          AND am.account_type = '費用'
+        GROUP BY am.code, am.name, strftime('%m', je.entry_date)
+        """
+        exp_rows = conn.execute(expense_sql, (user_id, fy_start, fy_end)).fetchall()
+
+        # Build per-account monthly breakdown
+        expense_accounts = {}
+        for r in exp_rows:
+            code = r['code']
+            if code not in expense_accounts:
+                expense_accounts[code] = {'code': code, 'name': r['name'], 'months': {}, 'total': 0}
+            m = int(r['month'])
+            expense_accounts[code]['months'][m] = r['total']
+            expense_accounts[code]['total'] += r['total']
+
+        # Build monthly array
+        monthly = []
+        annual_revenue = 0
+        annual_purchase = 0
+        for m in range(1, 13):
+            rev = rev_by_month.get(m, 0)
+            pur = pur_by_month.get(m, 0)
+            annual_revenue += rev
+            annual_purchase += pur
+            monthly.append({
+                'month': m,
+                'revenue': rev,
+                'purchases': pur,
+            })
+
+        # Sort expense accounts by code
+        sorted_expenses = sorted(expense_accounts.values(), key=lambda x: x['code'])
+        annual_expense = sum(ea['total'] for ea in sorted_expenses)
+
+        return {
+            'fiscal_year': fiscal_year,
+            'monthly': monthly,
+            'expense_accounts': sorted_expenses,
+            'annual_revenue': annual_revenue,
+            'annual_purchase': annual_purchase,
+            'annual_expense': annual_expense,
+        }
+    finally:
+        conn.close()
+
+
+# ============================================================
 #  Import History & Statement Sources
 # ============================================================
 

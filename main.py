@@ -1114,6 +1114,33 @@ def api_export_trial_balance():
     return jsonify({"balances": balances})
 
 
+@app.route('/api/export/blue-return', methods=['GET'])
+def api_export_blue_return():
+    """Get all data needed for 青色申告決算書 (4 pages)."""
+    uid = get_user_id()
+    start_date = request.args.get('start_date')  # e.g. 2025-01-01
+    end_date = request.args.get('end_date')      # e.g. 2025-12-31
+
+    # Determine fiscal year from start_date
+    fiscal_year = start_date[:4] if start_date else str(__import__('datetime').date.today().year)
+
+    # Page 1 & 3: Trial balance (P/L + B/S data)
+    balances = models.get_trial_balance(start_date, end_date, user_id=uid)
+
+    # Page 2: Monthly revenue/expense breakdown
+    monthly = models.get_monthly_summary(fiscal_year, user_id=uid)
+
+    # Opening balances for B/S page
+    opening = models.get_opening_balances(fiscal_year, user_id=uid)
+
+    return jsonify({
+        'fiscal_year': fiscal_year,
+        'balances': balances,
+        'monthly': monthly,
+        'opening_balances': opening,
+    })
+
+
 @app.route('/api/export/ledger', methods=['GET'])
 def api_export_ledger():
     """Export general ledger for all accounts."""

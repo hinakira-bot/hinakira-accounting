@@ -2474,6 +2474,21 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) { showToast('エクスポートに失敗しました', true); }
     });
 
+    // --- 5. 青色申告決算書 ---
+    document.getElementById('out-blue-return').addEventListener('click', async () => {
+        try {
+            showToast('青色申告決算書を生成中...');
+            const data = await fetchAPI('/api/export/blue-return?' + outParams().toString());
+            const balances = data.balances || [];
+            const monthly = data.monthly || {};
+            const fiscalYear = data.fiscal_year || thisYear.toString();
+            openBlueReturnPrintView(fiscalYear, balances, monthly);
+        } catch (err) {
+            console.error('Blue return export error:', err);
+            showToast('青色申告決算書の生成に失敗しました', true);
+        }
+    });
+
     // ============================================================
     //  Print / CSV Builders
     // ============================================================
@@ -2727,6 +2742,334 @@ document.addEventListener('DOMContentLoaded', () => {
             <p class="meta">期間: ${period}　|　出力日: ${todayStr()}</p>
             ${tableHtml}
             <br><button class="no-print" onclick="window.print()" style="padding:8px 20px;font-size:14px;cursor:pointer;border:1px solid #cbd5e1;border-radius:6px;background:#fff;">印刷 / PDF保存</button>
+        </body></html>`);
+        win.document.close();
+    }
+
+    // ============================================================
+    //  Blue Return Tax Form (青色申告決算書) — 4-page print view
+    // ============================================================
+    function openBlueReturnPrintView(fiscalYear, balances, monthly) {
+        // --- Data preparation ---
+        const revenues = balances.filter(b => b.account_type === '収益');
+        const expenses = balances.filter(b => b.account_type === '費用');
+        const assets = balances.filter(b => b.account_type === '資産');
+        const liabilities = balances.filter(b => b.account_type === '負債');
+        const equity = balances.filter(b => b.account_type === '純資産');
+
+        const sales = revenues.filter(b => b.code === '400');
+        const costOfSales = expenses.filter(b => b.code === '500');
+        const otherRevenues = revenues.filter(b => b.code !== '400');
+        const sgaExpenses = expenses.filter(b => b.code !== '500');
+
+        const salesTotal = sales.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const costTotal = costOfSales.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const grossProfit = salesTotal - costTotal;
+        const sgaTotal = sgaExpenses.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const operatingIncome = grossProfit - sgaTotal;
+        const otherRevTotal = otherRevenues.reduce((s, b) => s + Math.abs(b.closing_balance), 0);
+        const ordinaryIncome = operatingIncome + otherRevTotal;
+
+        const assetTotal = assets.reduce((s, b) => s + b.closing_balance, 0);
+        const liabTotal = liabilities.reduce((s, b) => s + b.closing_balance, 0);
+        const equityTotal = equity.reduce((s, b) => s + b.closing_balance, 0);
+
+        const monthlyData = monthly.monthly || [];
+        const expenseAccounts = monthly.expense_accounts || [];
+
+        // Account mapping for 青色申告決算書 line items
+        const BR_EXPENSE_MAP = [
+            {code: '510', label: '給料賃金'},
+            {code: '520', label: '外注工賃'},
+            {code: '580', label: '修繕費'},
+            {code: '530', label: '旅費交通費'},
+            {code: '531', label: '通信費'},
+            {code: '540', label: '広告宣伝費'},
+            {code: '541', label: '接待交際費'},
+            {code: '550', label: '消耗品費'},
+            {code: '560', label: '水道光熱費'},
+            {code: '570', label: '地代家賃'},
+            {code: '590', label: '支払手数料'},
+            {code: '600', label: '租税公課'},
+            {code: '620', label: '保険料'},
+            {code: '630', label: '減価償却費'},
+            {code: '610', label: '新聞図書費'},
+            {code: '551', label: '会議費'},
+            {code: '511', label: '給料手当'},
+            {code: '900', label: '雑費'},
+        ];
+
+        function findExpense(code) {
+            const b = expenses.find(e => e.code === code);
+            return b ? Math.abs(b.closing_balance) : 0;
+        }
+
+        const f = (n) => (n || 0).toLocaleString();
+
+        // --- CSS for A4 print layout ---
+        const css = `
+            * { margin:0; padding:0; box-sizing:border-box; }
+            body { font-family: 'Noto Sans JP', 'Inter', sans-serif; font-size: 10px; color: #000; }
+            .page { width: 210mm; min-height: 297mm; padding: 12mm 15mm; margin: 0 auto; page-break-after: always; position: relative; }
+            .page:last-child { page-break-after: auto; }
+            .page-title { text-align: center; font-size: 16px; font-weight: 700; margin-bottom: 4px; letter-spacing: 2px; }
+            .page-subtitle { text-align: center; font-size: 11px; color: #333; margin-bottom: 8px; }
+            .form-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 10px; }
+            .form-header span { border: 1px solid #999; padding: 2px 8px; }
+            table { border-collapse: collapse; width: 100%; font-size: 10px; }
+            th, td { border: 1px solid #666; padding: 3px 6px; vertical-align: middle; }
+            th { background: #f0f0f0; font-weight: 600; text-align: center; }
+            td.num { text-align: right; font-variant-numeric: tabular-nums; }
+            td.label { background: #f8f8f8; font-weight: 500; }
+            .section-header { background: #e0e0e0; font-weight: 700; text-align: center; font-size: 11px; }
+            .total-row td { font-weight: 700; background: #eef2ff; }
+            .grand-total td { font-weight: 700; background: #1e3a8a; color: #fff; font-size: 11px; }
+            .note { font-size: 9px; color: #666; margin-top: 4px; }
+            .two-col { display: flex; gap: 8px; }
+            .two-col > div { flex: 1; }
+            .print-btn { padding: 10px 24px; font-size: 14px; cursor: pointer; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; margin: 16px auto; display: block; }
+            @media print {
+                .no-print { display: none !important; }
+                .page { padding: 8mm 10mm; margin: 0; }
+                body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            }
+            @media screen {
+                body { background: #e2e8f0; }
+                .page { background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); margin: 20px auto; }
+            }
+        `;
+
+        // --- Page 1: 損益計算書 ---
+        function buildPage1() {
+            let html = `<div class="page">`;
+            html += `<div class="page-title">青色申告決算書（一般用）</div>`;
+            html += `<div class="page-subtitle">所得税青色申告決算書（一般用）　令和${parseInt(fiscalYear) - 2018}年分</div>`;
+            html += `<div class="form-header"><span>自 ${fiscalYear}年1月1日</span><span>至 ${fiscalYear}年12月31日</span></div>`;
+
+            html += `<table>`;
+            html += `<tr class="section-header"><td colspan="3">損益計算書</td></tr>`;
+            html += `<tr><th style="width:50%;">科目</th><th style="width:15%;">行</th><th style="width:35%;">金額</th></tr>`;
+
+            // Revenue
+            html += `<tr><td class="label">売上（収入）金額 ①</td><td class="num">①</td><td class="num">${f(salesTotal)}</td></tr>`;
+
+            // Cost of sales
+            html += `<tr class="section-header"><td colspan="3">売上原価</td></tr>`;
+            html += `<tr><td class="label">　仕入金額 ③</td><td class="num">③</td><td class="num">${f(costTotal)}</td></tr>`;
+            html += `<tr class="total-row"><td>差引原価 ⑤</td><td class="num">⑤</td><td class="num">${f(costTotal)}</td></tr>`;
+            html += `<tr class="total-row"><td>差引金額（売上総利益）⑥</td><td class="num">⑥</td><td class="num">${f(grossProfit)}</td></tr>`;
+
+            // Expenses
+            html += `<tr class="section-header"><td colspan="3">経費</td></tr>`;
+            let lineNum = 7;
+            let expensesShown = 0;
+            BR_EXPENSE_MAP.forEach(item => {
+                const val = findExpense(item.code);
+                if (val > 0) {
+                    html += `<tr><td>　${item.label}</td><td class="num">${lineNum}</td><td class="num">${f(val)}</td></tr>`;
+                    expensesShown++;
+                }
+                lineNum++;
+            });
+
+            // Any remaining expenses not in the map
+            expenses.forEach(e => {
+                if (e.code !== '500' && !BR_EXPENSE_MAP.find(m => m.code === e.code) && Math.abs(e.closing_balance) > 0) {
+                    html += `<tr><td>　${e.name}</td><td class="num">${lineNum}</td><td class="num">${f(Math.abs(e.closing_balance))}</td></tr>`;
+                    lineNum++;
+                }
+            });
+
+            html += `<tr class="total-row"><td>経費計 ㉕</td><td class="num">㉕</td><td class="num">${f(sgaTotal)}</td></tr>`;
+            html += `<tr class="total-row"><td>差引金額 ㉖ (⑥−㉕)</td><td class="num">㉖</td><td class="num">${f(operatingIncome)}</td></tr>`;
+
+            // Other revenue
+            if (otherRevTotal > 0) {
+                html += `<tr><td>　その他の収入 ㉗</td><td class="num">㉗</td><td class="num">${f(otherRevTotal)}</td></tr>`;
+            }
+
+            html += `<tr class="grand-total"><td>所得金額 ㉙</td><td class="num">㉙</td><td class="num">${f(ordinaryIncome)}</td></tr>`;
+
+            html += `</table>`;
+            html += `<p class="note">※ Hinakira会計から自動生成。最終確認は税務署の様式と照合してください。</p>`;
+            html += `</div>`;
+            return html;
+        }
+
+        // --- Page 2: 月別売上（収入）金額及び仕入金額 ---
+        function buildPage2() {
+            let html = `<div class="page">`;
+            html += `<div class="page-title">月別売上（収入）金額及び仕入金額</div>`;
+            html += `<div class="page-subtitle">令和${parseInt(fiscalYear) - 2018}年分</div>`;
+
+            html += `<table>`;
+            html += `<tr><th>月</th><th>売上（収入）金額</th><th>仕入金額</th></tr>`;
+            let revTotal = 0, purTotal = 0;
+            monthlyData.forEach(m => {
+                revTotal += m.revenue;
+                purTotal += m.purchases;
+                html += `<tr>
+                    <td style="text-align:center;">${m.month}月</td>
+                    <td class="num">${m.revenue > 0 ? f(m.revenue) : ''}</td>
+                    <td class="num">${m.purchases > 0 ? f(m.purchases) : ''}</td>
+                </tr>`;
+            });
+            html += `<tr class="total-row">
+                <td style="text-align:center;">合計</td>
+                <td class="num">${f(revTotal)}</td>
+                <td class="num">${f(purTotal)}</td>
+            </tr>`;
+            html += `</table>`;
+
+            // Expense breakdown by account
+            if (expenseAccounts.length > 0) {
+                html += `<div style="margin-top:12px;">`;
+                html += `<table>`;
+                html += `<tr class="section-header"><td colspan="14">経費の内訳（月別）</td></tr>`;
+                html += `<tr><th>科目</th>`;
+                for (let m = 1; m <= 12; m++) html += `<th>${m}月</th>`;
+                html += `<th>合計</th></tr>`;
+
+                expenseAccounts.forEach(ea => {
+                    html += `<tr><td class="label" style="font-size:9px;white-space:nowrap;">${ea.name}</td>`;
+                    for (let m = 1; m <= 12; m++) {
+                        const val = ea.months[m] || 0;
+                        html += `<td class="num" style="font-size:9px;">${val > 0 ? f(val) : ''}</td>`;
+                    }
+                    html += `<td class="num" style="font-size:9px;font-weight:600;">${f(ea.total)}</td></tr>`;
+                });
+                html += `</table></div>`;
+            }
+
+            html += `</div>`;
+            return html;
+        }
+
+        // --- Page 3: 減価償却費の計算・地代家賃の内訳 ---
+        function buildPage3() {
+            const depreciationVal = findExpense('630');
+            const rentVal = findExpense('570');
+            const insuranceVal = findExpense('620');
+            const taxVal = findExpense('600');
+
+            let html = `<div class="page">`;
+            html += `<div class="page-title">減価償却費の計算・地代家賃の内訳等</div>`;
+            html += `<div class="page-subtitle">令和${parseInt(fiscalYear) - 2018}年分</div>`;
+
+            // Depreciation
+            html += `<table style="margin-bottom:16px;">`;
+            html += `<tr class="section-header"><td colspan="4">減価償却費の計算</td></tr>`;
+            html += `<tr><th>資産名称</th><th>取得年月</th><th>取得価額</th><th>本年分の償却費</th></tr>`;
+            if (depreciationVal > 0) {
+                html += `<tr><td colspan="3" style="color:#666;">（個別資産の明細は別途管理してください）</td><td class="num">${f(depreciationVal)}</td></tr>`;
+            } else {
+                html += `<tr><td colspan="4" style="color:#999;text-align:center;">減価償却資産なし</td></tr>`;
+            }
+            html += `<tr class="total-row"><td colspan="3">減価償却費合計</td><td class="num">${f(depreciationVal)}</td></tr>`;
+            html += `</table>`;
+
+            // Rent
+            html += `<table style="margin-bottom:16px;">`;
+            html += `<tr class="section-header"><td colspan="4">地代家賃の内訳</td></tr>`;
+            html += `<tr><th>支払先</th><th>物件名</th><th>賃貸料（月額）</th><th>本年中の賃借料</th></tr>`;
+            if (rentVal > 0) {
+                html += `<tr><td colspan="2" style="color:#666;">（明細は摘要を参照）</td><td class="num">—</td><td class="num">${f(rentVal)}</td></tr>`;
+            } else {
+                html += `<tr><td colspan="4" style="color:#999;text-align:center;">地代家賃なし</td></tr>`;
+            }
+            html += `<tr class="total-row"><td colspan="3">地代家賃合計</td><td class="num">${f(rentVal)}</td></tr>`;
+            html += `</table>`;
+
+            // Tax and Insurance summary
+            html += `<table style="margin-bottom:16px;">`;
+            html += `<tr class="section-header"><td colspan="2">租税公課・保険料の内訳</td></tr>`;
+            if (taxVal > 0) html += `<tr><td class="label">租税公課</td><td class="num">${f(taxVal)}</td></tr>`;
+            if (insuranceVal > 0) html += `<tr><td class="label">保険料</td><td class="num">${f(insuranceVal)}</td></tr>`;
+            if (taxVal === 0 && insuranceVal === 0) {
+                html += `<tr><td colspan="2" style="color:#999;text-align:center;">該当なし</td></tr>`;
+            }
+            html += `</table>`;
+
+            html += `<p class="note">※ 減価償却費の詳細（定額法・定率法、耐用年数等）は別途管理が必要です。</p>`;
+            html += `</div>`;
+            return html;
+        }
+
+        // --- Page 4: 貸借対照表 ---
+        function buildPage4() {
+            let html = `<div class="page">`;
+            html += `<div class="page-title">貸借対照表</div>`;
+            html += `<div class="page-subtitle">令和${parseInt(fiscalYear) - 2018}年分　${fiscalYear}年12月31日現在</div>`;
+
+            html += `<div class="two-col">`;
+
+            // Left: Assets
+            html += `<div><table>`;
+            html += `<tr class="section-header"><td colspan="2">資産の部</td></tr>`;
+            html += `<tr><th>科目</th><th>金額</th></tr>`;
+            assets.forEach(a => {
+                if (a.closing_balance !== 0) {
+                    html += `<tr><td>${a.name}</td><td class="num">${f(a.closing_balance)}</td></tr>`;
+                }
+            });
+            // Add net income to assets as 元入金 adjustment or show separately
+            html += `<tr class="total-row"><td>資産合計</td><td class="num">${f(assetTotal)}</td></tr>`;
+            html += `</table></div>`;
+
+            // Right: Liabilities + Equity
+            html += `<div><table>`;
+            html += `<tr class="section-header"><td colspan="2">負債・資本の部</td></tr>`;
+            html += `<tr><th>科目</th><th>金額</th></tr>`;
+            liabilities.forEach(l => {
+                if (l.closing_balance !== 0) {
+                    html += `<tr><td>${l.name}</td><td class="num">${f(l.closing_balance)}</td></tr>`;
+                }
+            });
+            // Equity section
+            html += `<tr><td colspan="2" style="background:#f0f0f0;font-weight:600;text-align:center;">【元入金等】</td></tr>`;
+            equity.forEach(e => {
+                if (e.closing_balance !== 0) {
+                    html += `<tr><td>${e.name}</td><td class="num">${f(e.closing_balance)}</td></tr>`;
+                }
+            });
+            // Show current year income
+            html += `<tr><td>青色申告特別控除前の所得金額</td><td class="num">${f(ordinaryIncome)}</td></tr>`;
+            html += `<tr class="total-row"><td>負債・資本合計</td><td class="num">${f(liabTotal + equityTotal + ordinaryIncome)}</td></tr>`;
+            html += `</table></div>`;
+
+            html += `</div>`; // end two-col
+
+            // Balance check
+            const diff = assetTotal - (liabTotal + equityTotal + ordinaryIncome);
+            if (diff !== 0) {
+                html += `<p style="color:red;font-weight:bold;margin-top:8px;">⚠ 貸借差額: ${f(diff)}円（資産合計と負債・資本合計が一致していません）</p>`;
+            }
+
+            html += `<p class="note" style="margin-top:12px;">※ 元入金の期末残高 = 期首元入金 + 事業主借 − 事業主貸 + 所得金額</p>`;
+            html += `</div>`;
+            return html;
+        }
+
+        // --- Open print window ---
+        const win = window.open('', '_blank');
+        win.document.write(`<!DOCTYPE html><html lang="ja"><head>
+            <meta charset="UTF-8">
+            <title>青色申告決算書 ${fiscalYear}年分</title>
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+            <style>${css}</style>
+        </head><body>
+            <div class="no-print" style="text-align:center;padding:16px;">
+                <button class="print-btn" onclick="window.print()">印刷 / PDF保存</button>
+                <span style="font-size:12px;color:#666;">4ページ構成の青色申告決算書が印刷されます</span>
+            </div>
+            ${buildPage1()}
+            ${buildPage2()}
+            ${buildPage3()}
+            ${buildPage4()}
+            <div class="no-print" style="text-align:center;padding:16px;">
+                <button class="print-btn" onclick="window.print()">印刷 / PDF保存</button>
+            </div>
         </body></html>`);
         win.document.close();
     }
