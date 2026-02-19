@@ -272,10 +272,12 @@ def estimate_useful_life(asset_name: str, user_id: int = 0) -> dict:
 - 治具・金型 → 3年
 
 【重要ルール】
-1. 上記の表に該当するものはその年数を使用
-2. 該当しない場合は最も近い資産分類で判定
-3. 少額減価償却資産（10万円未満）は一括経費計上が可能だが、耐用年数の判定は行う
-4. 中古資産の場合は新品の耐用年数を回答（中古計算はユーザー側で行う）
+1. まずGoogle検索で「{asset_name} 耐用年数」「{asset_name} 減価償却 法定耐用年数」を検索し、国税庁や税理士サイトの情報を確認してください
+2. 検索結果と上記の表を照合して、最も正確な耐用年数を判定してください
+3. 上記の表に該当するものはその年数を使用
+4. 該当しない場合は最も近い資産分類で判定
+5. 少額減価償却資産（10万円未満）は一括経費計上が可能だが、耐用年数の判定は行う
+6. 中古資産の場合は新品の耐用年数を回答（中古計算はユーザー側で行う）
 
 以下のJSON形式で回答してください。Markdownは不要です。
 {{
@@ -287,7 +289,21 @@ def estimate_useful_life(asset_name: str, user_id: int = 0) -> dict:
 """
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(prompt)
+        # Use Google Search grounding for accurate depreciation data
+        # Try google_search first (Gemini 2.0+), fall back to google_search_retrieval
+        response = None
+        for search_tool in ['google_search_retrieval', None]:
+            try:
+                if search_tool:
+                    response = model.generate_content(prompt, tools=search_tool)
+                else:
+                    response = model.generate_content(prompt)
+                break
+            except Exception as tool_err:
+                print(f"Search grounding attempt ({search_tool}): {tool_err}")
+                continue
+        if response is None:
+            response = model.generate_content(prompt)
         text = response.text.strip()
         # Clean JSON
         if "```json" in text:
