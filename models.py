@@ -1270,11 +1270,12 @@ def create_fixed_asset(data: dict, user_id: int = 0) -> int:
         cur = conn.execute(
             P("""INSERT INTO fixed_assets
                 (user_id, asset_name, acquisition_date, useful_life,
-                 acquisition_cost, depreciation_method, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?)"""),
+                 acquisition_cost, depreciation_method, asset_category, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""),
             (user_id, data['asset_name'], data['acquisition_date'],
              int(data['useful_life']), int(data['acquisition_cost']),
              data.get('depreciation_method', '定額法'),
+             data.get('asset_category', ''),
              data.get('notes', ''))
         )
         conn.commit()
@@ -1311,12 +1312,13 @@ def update_fixed_asset(asset_id: int, data: dict, user_id: int = 0) -> bool:
         conn.execute(
             P(f"""UPDATE fixed_assets SET
                 asset_name = ?, acquisition_date = ?, useful_life = ?,
-                acquisition_cost = ?, depreciation_method = ?, notes = ?,
+                acquisition_cost = ?, depreciation_method = ?, asset_category = ?, notes = ?,
                 updated_at = {_now}
                 WHERE id = ? AND user_id = ? AND is_deleted = 0"""),
             (data['asset_name'], data['acquisition_date'],
              int(data['useful_life']), int(data['acquisition_cost']),
              data.get('depreciation_method', '定額法'),
+             data.get('asset_category', ''),
              data.get('notes', ''),
              asset_id, user_id)
         )
@@ -1415,6 +1417,7 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
         life = asset['useful_life']
         acq_date = asset['acquisition_date']  # YYYY-MM-DD
         method = asset.get('depreciation_method', '定額法')
+        asset_category = asset.get('asset_category', '') or ''
         disposal_type = asset.get('disposal_type', '') or ''
         disposal_date = asset.get('disposal_date', '') or ''
         disposal_price = int(asset.get('disposal_price', 0) or 0)
@@ -1470,6 +1473,7 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                 'acquisition_cost': cost,
                 'useful_life': life,
                 'depreciation_method': method,
+                'asset_category': asset_category,
                 'notes': remark,
                 'opening_book_value': 1,
                 'depreciation_amount': 0,
@@ -1513,6 +1517,7 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                     'acquisition_cost': cost,
                     'useful_life': life,
                     'depreciation_method': method,
+                    'asset_category': asset_category,
                     'notes': remark,
                     'opening_book_value': opening_bv,
                     'depreciation_amount': this_year_dep,
@@ -1520,6 +1525,8 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                     'annual_rate': round(1 / life, 4) if life else 0,
                     'disposal_type': '除却',
                     'disposal_remark': disp_remark,
+                    'disposal_price': 0,
+                    'retirement_loss': bv_after_dep,
                 })
             elif disposal_type == '売却':
                 # 売却: normal depreciation + gain/loss vs sale price
@@ -1536,6 +1543,7 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                     'acquisition_cost': cost,
                     'useful_life': life,
                     'depreciation_method': method,
+                    'asset_category': asset_category,
                     'notes': remark,
                     'opening_book_value': opening_bv,
                     'depreciation_amount': this_year_dep,
@@ -1543,6 +1551,8 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                     'annual_rate': round(1 / life, 4) if life else 0,
                     'disposal_type': '売却',
                     'disposal_remark': f'売却（売却額 {disposal_price:,}円 / {gl_text}）',
+                    'disposal_price': disposal_price,
+                    'bv_after_dep': bv_after_dep,
                 })
             continue
 
@@ -1566,6 +1576,7 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
             'acquisition_cost': cost,
             'useful_life': life,
             'depreciation_method': method,
+            'asset_category': asset_category,
             'notes': remark,
             'opening_book_value': opening_bv,
             'depreciation_amount': this_year_dep,
@@ -1576,3 +1587,163 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
         })
 
     return result
+
+
+# --- Asset category to account name mapping ---
+ASSET_CATEGORY_ACCOUNT_MAP = {
+    '器具備品': '器具備品',
+    '車両運搬具': '車両運搬具',
+    '建物': '建物',
+    '建物附属設備': '建物附属設備',
+    '機械装置': '機械装置',
+    '工具': '工具器具',
+    '工具器具': '工具器具',
+    '無形固定資産': 'ソフトウェア',
+    'ソフトウェア': 'ソフトウェア',
+}
+
+
+def _resolve_asset_account_name(asset_category: str) -> str:
+    """Map asset_category from AI to an accounts_master name."""
+    if not asset_category:
+        return '器具備品'  # fallback
+    for key, val in ASSET_CATEGORY_ACCOUNT_MAP.items():
+        if key in asset_category:
+            return val
+    return '器具備品'  # fallback
+
+
+def generate_depreciation_journals(user_id: int, fiscal_year: str) -> dict:
+    """Generate journal entries from depreciation schedule.
+
+    Creates:
+    1. 減価償却費: 借方=減価償却費 / 貸方=資産科目 (each asset with depreciation_amount > 0)
+    2. 除却: 借方=固定資産除却損 / 貸方=資産科目
+    3. 売却: 借方=普通預金+事業主貸 / 貸方=資産科目+事業主借
+
+    Returns dict with created count and details.
+    """
+    schedule = calculate_depreciation(user_id, fiscal_year)
+    if not schedule:
+        return {'created': 0, 'entries': [], 'message': '対象の固定資産がありません'}
+
+    fy_end = f"{fiscal_year}-12-31"
+    entries_to_create = []
+
+    # Pre-fetch all assets for disposal date lookup
+    all_assets = get_fixed_assets(user_id)
+    asset_map = {a['id']: a for a in all_assets}
+
+    for s in schedule:
+        asset_name = s['asset_name']
+        asset_category = s.get('asset_category', '')
+        credit_account_name = _resolve_asset_account_name(asset_category)
+        dep_amount = s['depreciation_amount']
+        disposal_type = s.get('disposal_type', '')
+
+        # 1. 減価償却費 journal (if there's depreciation this year)
+        if dep_amount > 0:
+            entries_to_create.append({
+                'entry_date': fy_end,
+                'debit_account': '減価償却費',
+                'credit_account': credit_account_name,
+                'amount': dep_amount,
+                'tax_classification': '不課税',
+                'counterparty': '',
+                'memo': f'減価償却費 {asset_name}',
+                'source': 'fa_depreciation',
+            })
+
+        # 2. 除却 journal
+        if disposal_type == '除却':
+            retirement_loss = s.get('retirement_loss', 0)
+            if retirement_loss > 1:  # > 備忘価額
+                asset_data = asset_map.get(s['id'], {})
+                disposal_date = asset_data.get('disposal_date', '') or fy_end
+
+                entries_to_create.append({
+                    'entry_date': disposal_date,
+                    'debit_account': '固定資産除却損',
+                    'credit_account': credit_account_name,
+                    'amount': retirement_loss,
+                    'tax_classification': '不課税',
+                    'counterparty': '',
+                    'memo': f'固定資産除却 {asset_name}',
+                    'source': 'fa_depreciation',
+                })
+
+        # 3. 売却 journal
+        if disposal_type == '売却':
+            disposal_price = s.get('disposal_price', 0)
+            bv_after_dep = s.get('bv_after_dep', 0)
+            asset_data = asset_map.get(s['id'], {})
+            disposal_date = asset_data.get('disposal_date', '') or fy_end
+
+            if disposal_price >= bv_after_dep:
+                # 売却益 or even: 借方=普通預金 / 貸方=資産科目 (for BV portion)
+                # + 貸方=事業主借 (for gain portion)
+                # Entry 1: 普通預金 / 資産科目 (book value portion)
+                if bv_after_dep > 0:
+                    entries_to_create.append({
+                        'entry_date': disposal_date,
+                        'debit_account': '普通預金',
+                        'credit_account': credit_account_name,
+                        'amount': bv_after_dep,
+                        'tax_classification': '不課税',
+                        'counterparty': '',
+                        'memo': f'固定資産売却 {asset_name}（帳簿価額）',
+                        'source': 'fa_depreciation',
+                    })
+                # Entry 2: gain portion → 普通預金 / 事業主借
+                gain = disposal_price - bv_after_dep
+                if gain > 0:
+                    entries_to_create.append({
+                        'entry_date': disposal_date,
+                        'debit_account': '普通預金',
+                        'credit_account': '事業主借',
+                        'amount': gain,
+                        'tax_classification': '不課税',
+                        'counterparty': '',
+                        'memo': f'固定資産売却益 {asset_name}（譲渡所得）',
+                        'source': 'fa_depreciation',
+                    })
+            else:
+                # 売却損: disposal_price < bv_after_dep
+                # Entry 1: 普通預金 / 資産科目 (sale price portion)
+                if disposal_price > 0:
+                    entries_to_create.append({
+                        'entry_date': disposal_date,
+                        'debit_account': '普通預金',
+                        'credit_account': credit_account_name,
+                        'amount': disposal_price,
+                        'tax_classification': '不課税',
+                        'counterparty': '',
+                        'memo': f'固定資産売却 {asset_name}（売却代金）',
+                        'source': 'fa_depreciation',
+                    })
+                # Entry 2: loss portion → 事業主貸 / 資産科目
+                loss = bv_after_dep - disposal_price
+                if loss > 0:
+                    entries_to_create.append({
+                        'entry_date': disposal_date,
+                        'debit_account': '事業主貸',
+                        'credit_account': credit_account_name,
+                        'amount': loss,
+                        'tax_classification': '不課税',
+                        'counterparty': '',
+                        'memo': f'固定資産売却損 {asset_name}（譲渡所得）',
+                        'source': 'fa_depreciation',
+                    })
+
+    if not entries_to_create:
+        return {'created': 0, 'entries': [], 'message': '生成対象の仕訳がありません（償却額が0の資産のみ）'}
+
+    # Create journal entries
+    ids = create_journal_entries_batch(entries_to_create, user_id)
+    successful = [i for i in ids if i is not None]
+
+    return {
+        'created': len(successful),
+        'entries': entries_to_create,
+        'message': f'{len(successful)}件の仕訳を生成しました',
+    }

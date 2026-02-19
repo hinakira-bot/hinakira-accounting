@@ -3402,6 +3402,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const faLife = document.getElementById('fa-life');
     const faCost = document.getElementById('fa-cost');
     const faMethod = document.getElementById('fa-method');
+    const faCategory = document.getElementById('fa-category');
     const faNotes = document.getElementById('fa-notes');
     const faCancelBtn = document.getElementById('fa-cancel-btn');
     const faAiBtn = document.getElementById('fa-ai-btn');
@@ -3416,6 +3417,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 useful_life: parseInt(faLife.value) || 0,
                 acquisition_cost: parseInt(faCost.value) || 0,
                 depreciation_method: faMethod.value,
+                asset_category: faCategory ? faCategory.value : '',
                 notes: faNotes.value.trim(),
             };
             if (!data.asset_name || !data.acquisition_date || !data.useful_life || !data.acquisition_cost) {
@@ -3446,6 +3448,7 @@ document.addEventListener('DOMContentLoaded', () => {
         faLife.value = '';
         faCost.value = '';
         faMethod.value = '定額法';
+        if (faCategory) faCategory.value = '';
         faNotes.value = '';
         if (faAiHint) faAiHint.textContent = '💡 資産名称を入力して「AI判定」を押すと、耐用年数を自動で判定します。';
         faCancelBtn.style.display = 'none';
@@ -3470,6 +3473,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 const res = await fetchAPI('/api/fixed-assets/ai-useful-life', 'POST', { asset_name: name });
                 if (res.useful_life) {
                     faLife.value = res.useful_life;
+                    // Auto-fill asset_category from AI result
+                    if (faCategory && res.asset_category) {
+                        const catMap = {
+                            '器具備品': '器具備品', '車両運搬具': '車両運搬具',
+                            '建物': '建物', '建物附属設備': '建物附属設備',
+                            '機械装置': '機械装置', '工具': '工具器具', '工具器具': '工具器具',
+                            '無形固定資産': 'ソフトウェア', 'ソフトウェア': 'ソフトウェア',
+                        };
+                        const mapped = catMap[res.asset_category] || '';
+                        if (mapped) {
+                            faCategory.value = mapped;
+                        } else {
+                            // Try partial match
+                            for (const [key, val] of Object.entries(catMap)) {
+                                if (res.asset_category.includes(key)) {
+                                    faCategory.value = val;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     const detail = res.detail_category ? ` / ${res.detail_category}` : '';
                     if (faAiHint) {
                         faAiHint.textContent = `✅ AI判定: ${res.asset_category || ''}${detail} → ${res.useful_life}年（${res.reasoning || ''})`;
@@ -3513,6 +3537,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="text-right">${fmt(a.acquisition_cost)}</td>
                     <td>${a.useful_life}年</td>
                     <td>${a.depreciation_method || '定額法'}</td>
+                    <td>${a.asset_category || ''}</td>
                     <td>${a.notes || ''}</td>
                     <td><button class="btn-row-delete" data-id="${a.id}" title="削除">✕</button></td>
                 </tr>`;
@@ -3563,6 +3588,7 @@ document.addEventListener('DOMContentLoaded', () => {
         faLife.value = asset.useful_life || '';
         faCost.value = asset.acquisition_cost || '';
         faMethod.value = asset.depreciation_method || '定額法';
+        if (faCategory) faCategory.value = asset.asset_category || '';
         faNotes.value = asset.notes || '';
         faCancelBtn.style.display = '';
         faAiHint.textContent = '';
@@ -3764,6 +3790,42 @@ document.addEventListener('DOMContentLoaded', () => {
         faDeprCalcBtn.addEventListener('click', loadDepreciationSchedule);
     }
 
+    // --- Generate depreciation journals ---
+    const faDeprGenBtn = document.getElementById('fa-depr-generate-btn');
+    if (faDeprGenBtn) {
+        faDeprGenBtn.addEventListener('click', async () => {
+            const yearEl = document.getElementById('fa-depr-year');
+            const year = yearEl ? yearEl.value : '2025';
+            if (!faDepreciationCache || faDepreciationCache.length === 0) {
+                showToast('先に「計算」を実行してください', true);
+                return;
+            }
+            // Check if any asset is missing asset_category
+            const missing = faDepreciationCache.filter(s => !s.asset_category && s.depreciation_amount > 0);
+            if (missing.length > 0) {
+                const names = missing.map(s => s.asset_name).join('、');
+                if (!confirm(`以下の資産に「資産区分」が設定されていません。\n${names}\n\nデフォルト（器具備品）として処理しますか？`)) return;
+            }
+            if (!confirm(`${year}年度の減価償却費・売却/除却の仕訳を仕訳帳に一括登録します。\nよろしいですか？`)) return;
+
+            faDeprGenBtn.disabled = true;
+            faDeprGenBtn.textContent = '生成中...';
+            try {
+                const res = await fetchAPI('/api/fixed-assets/generate-journals', 'POST', { fiscal_year: year });
+                if (res.error) {
+                    showToast(res.error, true);
+                } else {
+                    showToast(res.message || `${res.created}件の仕訳を生成しました`);
+                }
+            } catch (err) {
+                showToast('仕訳生成に失敗しました', true);
+            } finally {
+                faDeprGenBtn.disabled = false;
+                faDeprGenBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> 仕訳を一括生成';
+            }
+        });
+    }
+
     // --- Fixed assets output ---
     const faOutListCsv = document.getElementById('fa-out-list-csv');
     const faOutDeprCsv = document.getElementById('fa-out-depr-csv');
@@ -3775,9 +3837,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await fetchAPI('/api/fixed-assets');
                 const assets = data.assets || [];
                 if (assets.length === 0) { showToast('データがありません', true); return; }
-                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,備考,売却/除却,処分日,売却額\n';
+                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,資産区分,備考,売却/除却,処分日,売却額\n';
                 assets.forEach(a => {
-                    csv += `"${a.asset_name}",${a.acquisition_date},${a.acquisition_cost},${a.useful_life},"${a.depreciation_method}","${a.notes || ''}","${a.disposal_type || ''}","${a.disposal_date || ''}",${a.disposal_price || 0}\n`;
+                    csv += `"${a.asset_name}",${a.acquisition_date},${a.acquisition_cost},${a.useful_life},"${a.depreciation_method}","${a.asset_category || ''}","${a.notes || ''}","${a.disposal_type || ''}","${a.disposal_date || ''}",${a.disposal_price || 0}\n`;
                 });
                 downloadBlob(csv, `固定資産一覧_${todayStr()}.csv`, 'text/csv;charset=utf-8');
                 showToast('CSVをダウンロードしました');

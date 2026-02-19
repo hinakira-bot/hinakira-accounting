@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=45">
+    <link rel="stylesheet" href="style.css?v=46">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -527,6 +527,7 @@
                                                 <th class="fa-th" style="width:90px;">耐用年数</th>
                                                 <th class="fa-th" style="width:130px;">取得原価（税込）</th>
                                                 <th class="fa-th" style="width:100px;">償却方法</th>
+                                                <th class="fa-th" style="width:110px;">資産区分</th>
                                                 <th class="fa-th" style="min-width:140px;">備考</th>
                                                 <th class="fa-th" style="width:70px;"></th>
                                             </tr>
@@ -541,6 +542,18 @@
                                                     <select id="fa-method">
                                                         <option value="定額法" selected>定額法</option>
                                                         <option value="定率法">定率法</option>
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <select id="fa-category">
+                                                        <option value="">（AI判定）</option>
+                                                        <option value="器具備品">器具備品</option>
+                                                        <option value="車両運搬具">車両運搬具</option>
+                                                        <option value="建物">建物</option>
+                                                        <option value="建物附属設備">建物附属設備</option>
+                                                        <option value="機械装置">機械装置</option>
+                                                        <option value="工具器具">工具器具</option>
+                                                        <option value="ソフトウェア">ソフトウェア</option>
                                                     </select>
                                                 </td>
                                                 <td><input type="text" id="fa-notes" placeholder="任意のメモ"></td>
@@ -568,6 +581,7 @@
                                         <th class="text-right">取得原価</th>
                                         <th>耐用年数</th>
                                         <th>償却方法</th>
+                                        <th>資産区分</th>
                                         <th>備考</th>
                                         <th style="width:60px;"></th>
                                     </tr>
@@ -650,6 +664,10 @@
                                 <label>年度:</label>
                                 <input type="number" id="fa-depr-year" value="2025" min="2000" max="2099" style="width:80px;">
                                 <button type="button" id="fa-depr-calc-btn" class="btn btn-primary btn-sm">計算</button>
+                                <button type="button" id="fa-depr-generate-btn" class="btn btn-ai btn-sm" style="margin-left:0.5rem;" title="減価償却費・売却/除却の仕訳を仕訳帳に一括登録します">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                                    仕訳を一括生成
+                                </button>
                             </div>
                         </div>
                         <div class="table-wrap">
@@ -914,7 +932,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=45"></script>
+    <script src="script.js?v=46"></script>
 </body>
 
 </html>

@@ -1440,6 +1440,45 @@ def api_fixed_assets_cancel_disposal(asset_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/fixed-assets/generate-journals', methods=['POST'])
+def api_fixed_assets_generate_journals():
+    """Generate journal entries from depreciation schedule."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    data = request.json or {}
+    fiscal_year = data.get('fiscal_year', str(__import__('datetime').date.today().year))
+    try:
+        # Ensure asset-related accounts exist before generating journals
+        _ensure_asset_accounts()
+        result = models.generate_depreciation_journals(user['id'], fiscal_year)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _ensure_asset_accounts():
+    """Ensure fixed-asset related accounts exist in accounts_master."""
+    required = [
+        ("140", "器具備品", "資産", "不課税"),
+        ("141", "車両運搬具", "資産", "不課税"),
+        ("142", "建物", "資産", "不課税"),
+        ("143", "建物附属設備", "資産", "不課税"),
+        ("144", "機械装置", "資産", "不課税"),
+        ("145", "工具器具", "資産", "不課税"),
+        ("146", "ソフトウェア", "資産", "不課税"),
+        ("640", "固定資産除却損", "費用", "不課税"),
+    ]
+    for code, name, atype, tax in required:
+        existing = models.get_account_by_name(name)
+        if not existing:
+            try:
+                models.create_account(code, name, atype, tax)
+                print(f"Auto-created account: {name} ({code})")
+            except Exception as e:
+                print(f"Account creation note ({name}): {e}")
+
+
 @app.route('/api/fixed-assets/ai-useful-life', methods=['POST'])
 def api_fixed_assets_ai_useful_life():
     """Use AI to estimate useful life for a given asset name."""

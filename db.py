@@ -58,7 +58,15 @@ DEFAULT_ACCOUNTS = [
     ("600", "租税公課", "費用", "不課税", 600),
     ("610", "新聞図書費", "費用", "10%", 610),
     ("620", "保険料", "費用", "非課税", 620),
+    ("140", "器具備品", "資産", "不課税", 140),
+    ("141", "車両運搬具", "資産", "不課税", 141),
+    ("142", "建物", "資産", "不課税", 142),
+    ("143", "建物附属設備", "資産", "不課税", 143),
+    ("144", "機械装置", "資産", "不課税", 144),
+    ("145", "工具器具", "資産", "不課税", 145),
+    ("146", "ソフトウェア", "資産", "不課税", 146),
     ("630", "減価償却費", "費用", "不課税", 630),
+    ("640", "固定資産除却損", "費用", "不課税", 640),
     ("900", "雑費", "費用", "10%", 900),
 ]
 
@@ -515,6 +523,7 @@ def migrate_db():
                     asset_name TEXT NOT NULL, acquisition_date TEXT NOT NULL,
                     useful_life INTEGER NOT NULL, acquisition_cost INTEGER NOT NULL,
                     depreciation_method TEXT DEFAULT '定額法',
+                    asset_category TEXT DEFAULT '',
                     notes TEXT DEFAULT '',
                     is_deleted INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -525,6 +534,7 @@ def migrate_db():
                     asset_name TEXT NOT NULL, acquisition_date TEXT NOT NULL,
                     useful_life INTEGER NOT NULL, acquisition_cost INTEGER NOT NULL,
                     depreciation_method TEXT DEFAULT '定額法',
+                    asset_category TEXT DEFAULT '',
                     notes TEXT DEFAULT '',
                     is_deleted INTEGER DEFAULT 0,
                     created_at TEXT DEFAULT (datetime('now')),
@@ -545,6 +555,16 @@ def migrate_db():
                 print("Migration: Added disposal columns to fixed_assets.")
             except Exception as col_err:
                 print(f"Migration note (disposal columns): {col_err}")
+                if USE_PG:
+                    conn.rollback()
+
+        # Add asset_category column to fixed_assets if missing
+        if _table_exists(conn, 'fixed_assets') and not _column_exists(conn, 'fixed_assets', 'asset_category'):
+            try:
+                cur.execute("ALTER TABLE fixed_assets ADD COLUMN asset_category TEXT DEFAULT ''")
+                print("Migration: Added asset_category column to fixed_assets.")
+            except Exception as col_err:
+                print(f"Migration note (asset_category): {col_err}")
                 if USE_PG:
                     conn.rollback()
 
