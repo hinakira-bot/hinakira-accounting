@@ -261,16 +261,48 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_statement_sources_unique ON statement_sour
 """
 
 
+class PgConnectionWrapper:
+    """Wrap psycopg2 connection so that conn.execute() works like SQLite.
+    Returns a cursor that supports fetchone()/fetchall() directly."""
+    def __init__(self, raw_conn):
+        self._conn = raw_conn
+
+    def execute(self, sql, params=None):
+        cur = self._conn.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    @property
+    def autocommit(self):
+        return self._conn.autocommit
+
+    @autocommit.setter
+    def autocommit(self, value):
+        self._conn.autocommit = value
+
+
 def get_db():
     """Get a database connection. Uses PostgreSQL if DATABASE_URL is set, else SQLite."""
     if USE_PG:
         import psycopg2
         import psycopg2.extras
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = False
+        raw = psycopg2.connect(DATABASE_URL)
+        raw.autocommit = False
         # Use RealDictCursor so rows are dicts (like sqlite3.Row)
-        conn.cursor_factory = psycopg2.extras.RealDictCursor
-        return conn
+        raw.cursor_factory = psycopg2.extras.RealDictCursor
+        return PgConnectionWrapper(raw)
     else:
         import sqlite3
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
