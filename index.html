@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=39">
+    <link rel="stylesheet" href="style.css?v=40">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -660,7 +660,12 @@
         <div id="ai-chat-messages" class="ai-chat-messages">
             <div class="ai-msg ai-msg-bot">こんにちは！Hinakira会計のAIアシスタントです。会計処理やツールの使い方について、お気軽にご質問ください。</div>
         </div>
+        <div id="ai-chat-image-preview" class="ai-chat-image-preview hidden"></div>
         <div class="ai-chat-input-area">
+            <button id="ai-chat-image-btn" class="ai-chat-image-btn" title="画像を添付">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </button>
+            <input type="file" id="ai-chat-image-input" accept="image/*" style="display:none">
             <input type="text" id="ai-chat-input" class="ai-chat-input" placeholder="質問を入力..." autocomplete="off">
             <button id="ai-chat-send" class="ai-chat-send" title="送信">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
@@ -668,7 +673,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=38"></script>
+    <script src="script.js?v=39"></script>
 </body>
 
 </html>

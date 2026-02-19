@@ -3179,7 +3179,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatMessages = document.getElementById('ai-chat-messages');
     const chatInput = document.getElementById('ai-chat-input');
     const chatSendBtn = document.getElementById('ai-chat-send');
+    const chatImageBtn = document.getElementById('ai-chat-image-btn');
+    const chatImageInput = document.getElementById('ai-chat-image-input');
+    const chatImagePreview = document.getElementById('ai-chat-image-preview');
     let chatHistory = [];
+    let chatPendingImage = null; // {data: base64, mimeType: string, name: string}
 
     chatFab.addEventListener('click', () => {
         chatPanel.classList.toggle('hidden');
@@ -3189,9 +3193,55 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     chatClose.addEventListener('click', () => chatPanel.classList.add('hidden'));
 
+    // Image attachment handling
+    if (chatImageBtn) {
+        chatImageBtn.addEventListener('click', () => chatImageInput.click());
+    }
+    if (chatImageInput) {
+        chatImageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                addChatMsg('bot', '画像ファイルのみアップロードできます。');
+                return;
+            }
+            if (file.size > 10 * 1024 * 1024) {
+                addChatMsg('bot', 'ファイルサイズは10MB以下にしてください。');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+                const base64 = reader.result.split(',')[1];
+                chatPendingImage = { data: base64, mimeType: file.type, name: file.name };
+                showChatImagePreview(reader.result, file.name);
+            };
+            reader.readAsDataURL(file);
+            chatImageInput.value = '';
+        });
+    }
+
+    function showChatImagePreview(dataUrl, name) {
+        if (!chatImagePreview) return;
+        chatImagePreview.innerHTML = `
+            <div class="chat-preview-wrap">
+                <img src="${dataUrl}" alt="${name}" class="chat-preview-img">
+                <button type="button" class="chat-preview-remove" title="削除">&times;</button>
+            </div>`;
+        chatImagePreview.classList.remove('hidden');
+        chatImagePreview.querySelector('.chat-preview-remove').addEventListener('click', clearChatImage);
+    }
+
+    function clearChatImage() {
+        chatPendingImage = null;
+        if (chatImagePreview) {
+            chatImagePreview.innerHTML = '';
+            chatImagePreview.classList.add('hidden');
+        }
+    }
+
     async function sendChatMessage() {
         const msg = chatInput.value.trim();
-        if (!msg) return;
+        if (!msg && !chatPendingImage) return;
 
         const apiKey = localStorage.getItem('gemini_api_key');
         if (!apiKey) {
@@ -3199,23 +3249,32 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Add user message
-        addChatMsg('user', msg);
+        // Show user message with optional image
+        if (chatPendingImage) {
+            addChatMsg('user', msg || '(画像を送信)', `data:${chatPendingImage.mimeType};base64,${chatPendingImage.data}`);
+        } else {
+            addChatMsg('user', msg);
+        }
         chatInput.value = '';
-        chatHistory.push({ role: 'user', text: msg });
+        chatHistory.push({ role: 'user', text: msg || '画像について質問' });
+
+        // Build request body
+        const reqBody = {
+            message: msg,
+            history: chatHistory,
+            gemini_api_key: apiKey,
+        };
+        if (chatPendingImage) {
+            reqBody.image = { data: chatPendingImage.data, mimeType: chatPendingImage.mimeType };
+        }
+        clearChatImage();
 
         // Show loading
         const loadingEl = addChatMsg('loading', '考え中...');
         chatSendBtn.disabled = true;
 
         try {
-            const data = await fetchAPI('/api/chat', 'POST', {
-                message: msg,
-                history: chatHistory,
-                gemini_api_key: apiKey,
-            });
-
-            // Remove loading
+            const data = await fetchAPI('/api/chat', 'POST', reqBody);
             loadingEl.remove();
 
             if (data.reply) {
@@ -3233,10 +3292,38 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function addChatMsg(type, text) {
+    /** Escape HTML to prevent XSS */
+    function escapeHtml(str) {
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    /** Convert simple markdown to HTML (fallback if Gemini still uses markdown) */
+    function formatChatText(text) {
+        let html = escapeHtml(text);
+        // **bold** → <strong>
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        // *italic* → <em> (but not inside strong)
+        html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+        // newlines → <br>
+        html = html.replace(/\n/g, '<br>');
+        return html;
+    }
+
+    function addChatMsg(type, text, imageUrl) {
         const div = document.createElement('div');
         div.className = `ai-msg ai-msg-${type}`;
-        div.textContent = text;
+        if (type === 'loading') {
+            div.textContent = text;
+        } else {
+            let html = '';
+            if (imageUrl) {
+                html += `<img src="${imageUrl}" class="chat-msg-img" alt="添付画像">`;
+            }
+            html += formatChatText(text);
+            div.innerHTML = html;
+        }
         chatMessages.appendChild(div);
         chatMessages.scrollTop = chatMessages.scrollHeight;
         return div;

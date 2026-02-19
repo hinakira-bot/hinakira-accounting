@@ -1708,6 +1708,75 @@ tr.pl-subtotal td { border-top: 1px solid #c7d2fe; color: #1e3a8a; }
 .ai-chat-send:hover { background: #1d4ed8; }
 .ai-chat-send:disabled { background: #94a3b8; cursor: not-allowed; }
 
+/* Chat image attachment button */
+.ai-chat-image-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: transparent;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+.ai-chat-image-btn:hover {
+    background: #f1f5f9;
+    color: #2563eb;
+    border-color: #2563eb;
+}
+
+/* Chat image preview (above input area) */
+.ai-chat-image-preview {
+    padding: 8px 16px 0;
+    background: #fff;
+}
+.chat-preview-wrap {
+    position: relative;
+    display: inline-block;
+}
+.chat-preview-img {
+    max-width: 120px;
+    max-height: 80px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    object-fit: cover;
+}
+.chat-preview-remove {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Chat message image (in bubble) */
+.chat-msg-img {
+    max-width: 100%;
+    max-height: 150px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    display: block;
+    object-fit: contain;
+}
+
+/* Bot message formatting (allow HTML) */
+.ai-msg-bot strong { font-weight: 600; }
+.ai-msg-bot em { font-style: italic; }
+
 /* === Advanced Search Modal === */
 .search-modal-overlay {
     position: fixed;

@@ -751,7 +751,9 @@ def api_chat():
     history = data.get('history', [])
     gemini_api_key = data.get('gemini_api_key', '')
 
-    if not message:
+    image = data.get('image')  # {data: base64, mimeType: 'image/png'}
+
+    if not message and not image:
         return jsonify({"error": "メッセージが空です"}), 400
     if not gemini_api_key:
         return jsonify({"error": "Gemini APIキーが設定されていません"}), 401
@@ -789,6 +791,14 @@ def api_chat():
 - 税理士資格に基づく個別の税務判断や申告代行はできません
 - 一般的な会計知識に基づいたアドバイスを提供してください
 - 回答は簡潔にわかりやすくしてください
+
+【出力形式の厳守ルール】
+- マークダウン記法（*, **, #, ```, - など）は絶対に使わないでください
+- 箇条書きには「・」を使ってください
+- 強調したい語句は「」（かぎかっこ）で囲んでください
+- 見出しが必要な場合は【】で囲んでください
+- コード例が必要な場合はそのまま記述してください（バッククォート不要）
+- ユーザーが画像を添付した場合は、画像の内容を読み取って回答してください
 """
 
     try:
@@ -802,7 +812,19 @@ def api_chat():
             role = "user" if h.get('role') == 'user' else "model"
             contents.append({"role": role, "parts": [{"text": h.get('text', '')}]})
 
-        contents.append({"role": "user", "parts": [{"text": message}]})
+        user_parts = []
+        if message:
+            user_parts.append({"text": message})
+        if image and isinstance(image, dict) and image.get('data'):
+            user_parts.append({
+                "inline_data": {
+                    "mime_type": image.get('mimeType', 'image/png'),
+                    "data": image['data']
+                }
+            })
+        if not user_parts:
+            user_parts.append({"text": "この画像について教えてください。"})
+        contents.append({"role": "user", "parts": user_parts})
 
         response = model.generate_content(contents)
         return jsonify({"reply": response.text})
