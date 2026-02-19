@@ -993,9 +993,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (driveFileIdsInScan.length && accessToken) {
                     fetchAPI('/api/drive/inbox/move', 'POST', {
                         access_token: accessToken,
-                        file_ids: driveFileIdsInScan
+                        file_ids: driveFileIdsInScan,
+                        categories: driveFileCategoryMap
                     }).then(() => {
                         driveFileIdsInScan = [];
+                        driveFileCategoryMap = {};
                     }).catch(() => {});
                 }
                 scanResults = [];
@@ -1016,6 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Google Drive inbox scan
     const drivePickBtn = document.getElementById('drive-pick-btn');
     let driveFileIdsInScan = []; // track inbox file IDs for move after save
+    let driveFileCategoryMap = {}; // track file_id -> evidence_category for folder routing
 
     drivePickBtn.addEventListener('click', async () => {
         if (!accessToken) {
@@ -1051,8 +1054,14 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             if (results.error) throw new Error(results.error);
 
-            // Track file IDs for moving after save
+            // Track file IDs for moving after save + build category map
             driveFileIdsInScan = [...new Set(results.map(r => r.drive_file_id).filter(Boolean))];
+            // Build file_id -> category mapping from AI analysis results
+            for (const r of results) {
+                if (r.drive_file_id && r.evidence_category) {
+                    driveFileCategoryMap[r.drive_file_id] = r.evidence_category;
+                }
+            }
 
             scanResults = scanResults.length ? [...scanResults, ...results] : results;
             renderScanResults();

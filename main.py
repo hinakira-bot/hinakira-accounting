@@ -281,8 +281,76 @@ def get_all_folder_ids(service, folder_name, parent_ids=None):
     return all_ids
 
 
-def upload_to_drive_processed(file_bytes, filename, mime_type, access_token):
-    """Upload evidence file to Accounting_Evidence/processed/ on Google Drive."""
+# ============================
+#  証憑カテゴリ自動判定
+# ============================
+EVIDENCE_CATEGORIES = {
+    '預金明細': '預金明細',
+    'クレジットカード明細': 'クレジットカード明細',
+    '支払請求書': '支払請求書',
+    'レシート・領収書': 'レシート・領収書',
+    '売上明細': '売上明細',
+    'その他': 'その他',
+}
+
+def determine_evidence_category(entries):
+    """AI解析結果の勘定科目からカテゴリを自動判定する。"""
+    if not entries:
+        return 'その他'
+
+    # entries がリストでなければ単一エントリとして処理
+    if isinstance(entries, dict):
+        entries = [entries]
+
+    # 複数エントリかどうか
+    is_multi = len(entries) >= 3
+
+    # 勘定科目の集計
+    debits = [e.get('debit', '') for e in entries if e.get('debit')]
+    credits = [e.get('credit', '') for e in entries if e.get('credit')]
+
+    debit_set = set(debits)
+    credit_set = set(credits)
+
+    # 預金明細: debit/creditに「普通預金」が含まれ、かつ複数エントリ（銀行CSV）
+    if is_multi and ('普通預金' in debit_set or '普通預金' in credit_set):
+        # 普通預金がdebitまたはcreditに頻出するか
+        bank_count = sum(1 for e in entries if e.get('debit') == '普通預金' or e.get('credit') == '普通預金')
+        if bank_count >= len(entries) * 0.5:
+            return '預金明細'
+
+    # クレジットカード明細: creditが「未払金」で複数エントリ
+    if is_multi and '未払金' in credit_set:
+        cc_count = sum(1 for e in entries if e.get('credit') == '未払金')
+        if cc_count >= len(entries) * 0.5:
+            return 'クレジットカード明細'
+
+    # 売上明細: creditが「売上高」「雑収入」
+    sale_accounts = {'売上高', '雑収入', '売上'}
+    if credit_set & sale_accounts:
+        sale_count = sum(1 for e in entries if e.get('credit', '') in sale_accounts)
+        if sale_count >= len(entries) * 0.5:
+            return '売上明細'
+
+    # 支払請求書: debitが費用科目(外注費/地代家賃等)でcreditが普通預金/未払金、少数エントリ
+    invoice_debits = {'外注費', '地代家賃', '支払手数料', '通信費', '水道光熱費', '保険料', '租税公課', 'リース料'}
+    if not is_multi and (debit_set & invoice_debits) and (credit_set & {'普通預金', '未払金', '買掛金'}):
+        return '支払請求書'
+
+    # レシート・領収書: debitが少額経費科目 or creditが「現金」
+    receipt_debits = {'消耗品費', '旅費交通費', '交際費', '会議費', '福利厚生費', '新聞図書費',
+                      '雑費', '食費', '日用品費', '衣服費', '医療費', '教育費', '娯楽費'}
+    if '現金' in credit_set:
+        return 'レシート・領収書'
+    if debit_set & receipt_debits and not is_multi:
+        return 'レシート・領収書'
+
+    # デフォルト
+    return 'その他'
+
+
+def upload_to_drive_processed(file_bytes, filename, mime_type, access_token, category=None):
+    """Upload evidence file to Accounting_Evidence/processed/ (with optional category subfolder) on Google Drive."""
     try:
         if not access_token:
             return ""
@@ -291,7 +359,12 @@ def upload_to_drive_processed(file_bytes, filename, mime_type, access_token):
         root_id = get_or_create_folder(service, "Accounting_Evidence")
         processed_id = get_or_create_folder(service, "processed", root_id)
 
-        file_metadata = {'name': filename, 'parents': [processed_id]}
+        # カテゴリが指定されていればサブフォルダに保存
+        target_folder_id = processed_id
+        if category and category in EVIDENCE_CATEGORIES:
+            target_folder_id = get_or_create_folder(service, category, processed_id)
+
+        file_metadata = {'name': filename, 'parents': [target_folder_id]}
         media = _get_media_upload()(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         return file.get('webViewLink')
@@ -412,9 +485,13 @@ def api_drive_inbox_analyze():
             else:
                 res = _get_ai_service().analyze_document(fbytes, mime, history)
 
+            # カテゴリ判定（ファイル単位）
+            category = determine_evidence_category(res)
+
             for item in res:
                 item['evidence_url'] = web_link
                 item['drive_file_id'] = fid
+                item['evidence_category'] = category
                 key = f"{item.get('date')}_{str(item.get('amount'))}_{item.get('counterparty')}"
                 item['is_duplicate'] = key in existing
             results.extend(res)
@@ -426,10 +503,11 @@ def api_drive_inbox_analyze():
 
 @app.route('/api/drive/inbox/move', methods=['POST'])
 def api_drive_inbox_move():
-    """Move files from inbox to processed after journal registration."""
+    """Move files from inbox to processed (with category subfolder) after journal registration."""
     data = request.json or {}
     access_token = data.get('access_token', '')
     file_ids = data.get('file_ids', [])
+    categories = data.get('categories', {})  # {file_id: category_name}
 
     if not access_token:
         return jsonify({"error": "Googleログインが必要です"}), 401
@@ -442,14 +520,26 @@ def api_drive_inbox_move():
         root_id = get_or_create_folder(service, "Accounting_Evidence")
         processed_id = get_or_create_folder(service, "processed", root_id)
 
+        # カテゴリ別サブフォルダIDのキャッシュ
+        category_folder_cache = {}
+
         moved = 0
         for fid in file_ids:
             try:
+                # このファイルのカテゴリを取得
+                cat = categories.get(fid, 'その他')
+                if cat and cat in EVIDENCE_CATEGORIES:
+                    if cat not in category_folder_cache:
+                        category_folder_cache[cat] = get_or_create_folder(service, cat, processed_id)
+                    target_id = category_folder_cache[cat]
+                else:
+                    target_id = processed_id
+
                 f = service.files().get(fileId=fid, fields='parents').execute()
                 current_parents = ','.join(f.get('parents', []))
                 service.files().update(
                     fileId=fid,
-                    addParents=processed_id,
+                    addParents=target_id,
                     removeParents=current_parents,
                     fields='id'
                 ).execute()
@@ -739,17 +829,23 @@ def api_analyze():
         ftype = file.content_type
         fbytes = file.read()
 
-        ev_url = ""
-        if access_token:
-            ev_url = upload_to_drive_processed(fbytes, file.filename, ftype, access_token)
-
+        # AI解析を先に実行（カテゴリ判定に必要）
         if fname.endswith('.csv'):
             res = _get_ai_service().analyze_csv(fbytes, history)
         else:
             res = _get_ai_service().analyze_document(fbytes, ftype, history)
 
+        # カテゴリ判定
+        category = determine_evidence_category(res)
+
+        # カテゴリ付きでDriveにアップロード
+        ev_url = ""
+        if access_token:
+            ev_url = upload_to_drive_processed(fbytes, file.filename, ftype, access_token, category=category)
+
         for item in res:
             item['evidence_url'] = ev_url
+            item['evidence_category'] = category
             key = f"{item.get('date')}_{str(item.get('amount'))}_{item.get('counterparty')}"
             item['is_duplicate'] = key in existing
         results.extend(res)
