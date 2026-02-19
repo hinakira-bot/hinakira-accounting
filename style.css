@@ -2095,6 +2095,27 @@ tr.pl-subtotal td { border-top: 1px solid #c7d2fe; color: #1e3a8a; }
 }
 .btn-fa-cancel:hover { color: #dc2626; }
 
+/* Disposal badges */
+.badge-disp {
+    display: inline-block;
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1.2;
+    vertical-align: middle;
+    margin-left: 0.25rem;
+}
+.badge-sale { background: #fef2f2; color: #b91c1c; border: 1px solid #fca5a5; }
+.badge-retire { background: #fffbeb; color: #92400e; border: 1px solid #fbbf24; }
+
+/* Disposed row */
+.row-disposed td { opacity: 0.7; }
+
+/* Disposal remark styling in depreciation table */
+.remark-sale { font-size: 0.75rem; color: #b91c1c; font-weight: 500; }
+.remark-retire { font-size: 0.75rem; color: #92400e; font-weight: 500; }
+
 /* Depreciation header with year selector */
 .fa-depr-header {
     display: flex;

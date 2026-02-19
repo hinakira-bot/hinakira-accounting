@@ -532,6 +532,22 @@ def migrate_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_fixed_assets_user ON fixed_assets(user_id)")
             print("Migration: Created fixed_assets table.")
 
+        # Add disposal columns to fixed_assets if missing
+        try:
+            cur.execute("SELECT disposal_type FROM fixed_assets LIMIT 1")
+        except Exception:
+            if USE_PG:
+                conn.rollback()
+            try:
+                cur.execute("ALTER TABLE fixed_assets ADD COLUMN disposal_type TEXT DEFAULT ''")
+                cur.execute("ALTER TABLE fixed_assets ADD COLUMN disposal_date TEXT DEFAULT ''")
+                cur.execute("ALTER TABLE fixed_assets ADD COLUMN disposal_price INTEGER DEFAULT 0")
+                print("Migration: Added disposal columns to fixed_assets.")
+            except Exception as col_err:
+                print(f"Migration note (disposal columns): {col_err}")
+                if USE_PG:
+                    conn.rollback()
+
         conn.commit()
         print("Migration completed successfully.")
     except Exception as e:

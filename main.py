@@ -1409,6 +1409,37 @@ def api_fixed_assets_depreciation():
     return jsonify({"fiscal_year": fiscal_year, "schedule": schedule})
 
 
+@app.route('/api/fixed-assets/<int:asset_id>/dispose', methods=['POST'])
+def api_fixed_assets_dispose(asset_id):
+    """Record disposal (売却 or 除却) of a fixed asset."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    data = request.json or {}
+    if not data.get('disposal_type') or not data.get('disposal_date'):
+        return jsonify({"error": "disposal_type と disposal_date は必須です"}), 400
+    if data['disposal_type'] not in ('売却', '除却'):
+        return jsonify({"error": "disposal_type は '売却' or '除却' のみ"}), 400
+    try:
+        models.dispose_fixed_asset(asset_id, data, user['id'])
+        return jsonify({"status": "disposed"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/fixed-assets/<int:asset_id>/cancel-disposal', methods=['POST'])
+def api_fixed_assets_cancel_disposal(asset_id):
+    """Cancel disposal (undo 売却/除却) of a fixed asset."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    try:
+        models.cancel_disposal(asset_id, user['id'])
+        return jsonify({"status": "cancelled"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/fixed-assets/ai-useful-life', methods=['POST'])
 def api_fixed_assets_ai_useful_life():
     """Use AI to estimate useful life for a given asset name."""

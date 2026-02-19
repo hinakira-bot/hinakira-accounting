@@ -3389,6 +3389,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (target) target.classList.add('active');
             // Load data when switching tabs
             if (btn.dataset.faTab === 'fa-list') loadFixedAssetsList();
+            if (btn.dataset.faTab === 'fa-disposal') loadDisposalList();
             if (btn.dataset.faTab === 'fa-depreciation') loadDepreciationSchedule();
         });
     });
@@ -3503,17 +3504,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (empty) empty.style.display = 'none';
 
-            tbody.innerHTML = faAssetsCache.map(a => `
-                <tr data-id="${a.id}">
-                    <td>${a.asset_name || ''}</td>
+            tbody.innerHTML = faAssetsCache.map(a => {
+                const dispBadge = a.disposal_type ? `<span class="badge-disp badge-${a.disposal_type === '売却' ? 'sale' : 'retire'}">${a.disposal_type}</span>` : '';
+                return `
+                <tr data-id="${a.id}" ${a.disposal_type ? 'class="row-disposed"' : ''}>
+                    <td>${a.asset_name || ''} ${dispBadge}</td>
                     <td>${a.acquisition_date || ''}</td>
                     <td class="text-right">${fmt(a.acquisition_cost)}</td>
                     <td>${a.useful_life}年</td>
                     <td>${a.depreciation_method || '定額法'}</td>
                     <td>${a.notes || ''}</td>
                     <td><button class="btn-row-delete" data-id="${a.id}" title="削除">✕</button></td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
 
             // Row click → edit
             tbody.querySelectorAll('tr').forEach(row => {
@@ -3568,6 +3571,132 @@ document.addEventListener('DOMContentLoaded', () => {
         faForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    // --- Disposal (売却・除却) ---
+    const faDispForm = document.getElementById('fa-disposal-form');
+    const faDispAssetId = document.getElementById('fa-disp-asset-id');
+    const faDispAssetName = document.getElementById('fa-disp-asset-name');
+    const faDispType = document.getElementById('fa-disp-type');
+    const faDispDate = document.getElementById('fa-disp-date');
+    const faDispPrice = document.getElementById('fa-disp-price');
+
+    // Toggle sale price field visibility based on disposal type
+    if (faDispType) {
+        faDispType.addEventListener('change', () => {
+            const priceCell = faDispPrice?.closest('td');
+            if (faDispType.value === '除却') {
+                if (faDispPrice) faDispPrice.value = '0';
+                if (priceCell) priceCell.style.opacity = '0.4';
+            } else {
+                if (priceCell) priceCell.style.opacity = '1';
+            }
+        });
+    }
+
+    async function loadDisposalList() {
+        try {
+            const data = await fetchAPI('/api/fixed-assets');
+            faAssetsCache = data.assets || [];
+            const tbody = document.getElementById('fa-disp-list-tbody');
+            const empty = document.getElementById('fa-disp-list-empty');
+            if (!tbody) return;
+
+            if (faAssetsCache.length === 0) {
+                tbody.innerHTML = '';
+                if (empty) empty.style.display = '';
+                return;
+            }
+            if (empty) empty.style.display = 'none';
+
+            tbody.innerHTML = faAssetsCache.map(a => {
+                const isDisposed = a.disposal_type && a.disposal_type !== '';
+                const statusText = isDisposed
+                    ? `<span class="badge-disp badge-${a.disposal_type === '売却' ? 'sale' : 'retire'}">${a.disposal_type} (${a.disposal_date || ''})</span>`
+                    : '<span style="color:#16a34a;">使用中</span>';
+                const actionBtn = isDisposed
+                    ? `<button class="btn btn-ghost btn-sm fa-cancel-disp-btn" data-id="${a.id}" title="取消">取消</button>`
+                    : `<button class="btn btn-primary btn-sm fa-select-disp-btn" data-id="${a.id}" title="選択">選択</button>`;
+                return `
+                <tr data-id="${a.id}" ${isDisposed ? 'class="row-disposed"' : ''}>
+                    <td>${a.asset_name || ''}</td>
+                    <td>${a.acquisition_date || ''}</td>
+                    <td class="text-right">${fmt(a.acquisition_cost)}</td>
+                    <td>${a.useful_life}年</td>
+                    <td>${statusText}</td>
+                    <td>${actionBtn}</td>
+                </tr>`;
+            }).join('');
+
+            // Select button → fill form
+            tbody.querySelectorAll('.fa-select-disp-btn').forEach(btn => {
+                btn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const id = btn.dataset.id;
+                    const asset = faAssetsCache.find(a => String(a.id) === String(id));
+                    if (asset) {
+                        faDispAssetId.value = asset.id;
+                        faDispAssetName.value = asset.asset_name;
+                        faDispDate.focus();
+                        // Scroll form into view
+                        faDispForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+            });
+
+            // Cancel disposal button
+            tbody.querySelectorAll('.fa-cancel-disp-btn').forEach(btn => {
+                btn.addEventListener('click', async (ev) => {
+                    ev.stopPropagation();
+                    if (!confirm('売却/除却を取り消しますか？')) return;
+                    try {
+                        await fetchAPI(`/api/fixed-assets/${btn.dataset.id}/cancel-disposal`, 'POST');
+                        showToast('取り消しました');
+                        loadDisposalList();
+                    } catch (err) {
+                        showToast('取消に失敗しました', true);
+                    }
+                });
+            });
+        } catch (err) {
+            console.error('Disposal list load error:', err);
+        }
+    }
+
+    if (faDispForm) {
+        faDispForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const assetId = faDispAssetId.value;
+            if (!assetId) {
+                showToast('対象資産を選択してください', true);
+                return;
+            }
+            if (!faDispDate.value) {
+                showToast('売却/除却日を入力してください', true);
+                return;
+            }
+            const payload = {
+                disposal_type: faDispType.value,
+                disposal_date: faDispDate.value,
+                disposal_price: parseInt(faDispPrice.value) || 0,
+            };
+            if (payload.disposal_type === '売却' && !payload.disposal_price) {
+                if (!confirm('売却額が0円ですが、よろしいですか？')) return;
+            }
+            try {
+                await fetchAPI(`/api/fixed-assets/${assetId}/dispose`, 'POST', payload);
+                showToast(`${payload.disposal_type}を登録しました`);
+                // Reset form
+                faDispAssetId.value = '';
+                faDispAssetName.value = '';
+                faDispDate.value = '';
+                faDispPrice.value = '0';
+                faDispType.value = '除却';
+                loadDisposalList();
+            } catch (err) {
+                showToast('処理に失敗しました', true);
+            }
+        });
+    }
+
     // --- Depreciation schedule ---
     async function loadDepreciationSchedule() {
         const yearEl = document.getElementById('fa-depr-year');
@@ -3585,21 +3714,26 @@ document.addEventListener('DOMContentLoaded', () => {
         const tbody = document.getElementById('fa-depr-tbody');
         const tfoot = document.getElementById('fa-depr-tfoot');
         const empty = document.getElementById('fa-depr-empty');
+        const notice = document.getElementById('fa-depr-notice');
         if (!tbody) return;
 
         if (schedule.length === 0) {
             tbody.innerHTML = '';
             tfoot.innerHTML = '';
             if (empty) empty.style.display = '';
+            if (notice) notice.style.display = 'none';
             return;
         }
         if (empty) empty.style.display = 'none';
 
         let totalDepreciation = 0;
+        let hasSale = false;
         tbody.innerHTML = schedule.map(s => {
             totalDepreciation += s.depreciation_amount;
+            if (s.disposal_type === '売却') hasSale = true;
+            const remarkClass = s.disposal_remark ? (s.disposal_type === '売却' ? 'remark-sale' : 'remark-retire') : '';
             return `
-                <tr>
+                <tr ${s.disposal_type ? 'class="row-disposed"' : ''}>
                     <td>${s.asset_name}</td>
                     <td>${s.acquisition_date}</td>
                     <td class="text-right">${fmt(s.acquisition_cost)}</td>
@@ -3609,6 +3743,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="text-right">${fmt(s.opening_book_value)}</td>
                     <td class="text-right">${fmt(s.depreciation_amount)}</td>
                     <td class="text-right">${fmt(s.closing_book_value)}</td>
+                    <td class="${remarkClass}">${s.disposal_remark || ''}</td>
                 </tr>`;
         }).join('');
 
@@ -3617,7 +3752,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td colspan="7" class="text-right">合計</td>
                 <td class="text-right">${fmt(totalDepreciation)}</td>
                 <td></td>
+                <td></td>
             </tr>`;
+
+        // Show/hide 譲渡所得 notice
+        if (notice) notice.style.display = hasSale ? '' : 'none';
     }
 
     const faDeprCalcBtn = document.getElementById('fa-depr-calc-btn');
@@ -3636,9 +3775,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await fetchAPI('/api/fixed-assets');
                 const assets = data.assets || [];
                 if (assets.length === 0) { showToast('データがありません', true); return; }
-                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,備考\n';
+                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,備考,売却/除却,処分日,売却額\n';
                 assets.forEach(a => {
-                    csv += `"${a.asset_name}",${a.acquisition_date},${a.acquisition_cost},${a.useful_life},"${a.depreciation_method}","${a.notes || ''}"\n`;
+                    csv += `"${a.asset_name}",${a.acquisition_date},${a.acquisition_cost},${a.useful_life},"${a.depreciation_method}","${a.notes || ''}","${a.disposal_type || ''}","${a.disposal_date || ''}",${a.disposal_price || 0}\n`;
                 });
                 downloadBlob(csv, `固定資産一覧_${todayStr()}.csv`, 'text/csv;charset=utf-8');
                 showToast('CSVをダウンロードしました');
@@ -3653,9 +3792,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await fetchAPI(`/api/fixed-assets/depreciation?fiscal_year=${year}`);
                 const schedule = data.schedule || [];
                 if (schedule.length === 0) { showToast('データがありません', true); return; }
-                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,償却率,期首帳簿価額,本年分償却費,期末帳簿価額\n';
+                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,償却率,期首帳簿価額,本年分償却費,期末帳簿価額,備考\n';
                 schedule.forEach(s => {
-                    csv += `"${s.asset_name}",${s.acquisition_date},${s.acquisition_cost},${s.useful_life},"${s.depreciation_method}",${s.annual_rate},${s.opening_book_value},${s.depreciation_amount},${s.closing_book_value}\n`;
+                    csv += `"${s.asset_name}",${s.acquisition_date},${s.acquisition_cost},${s.useful_life},"${s.depreciation_method}",${s.annual_rate},${s.opening_book_value},${s.depreciation_amount},${s.closing_book_value},"${s.disposal_remark || ''}"\n`;
                 });
                 downloadBlob(csv, `減価償却明細書_${year}年_${todayStr()}.csv`, 'text/csv;charset=utf-8');
                 showToast('CSVをダウンロードしました');
@@ -3677,8 +3816,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function printDepreciationSchedule(schedule, year) {
         let totalDep = 0;
+        let hasSale = false;
         const rows = schedule.map(s => {
             totalDep += s.depreciation_amount;
+            if (s.disposal_type === '売却') hasSale = true;
             return `<tr>
                 <td>${s.asset_name}</td>
                 <td>${s.acquisition_date}</td>
@@ -3689,8 +3830,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td class="r">${fmt(s.opening_book_value)}</td>
                 <td class="r">${fmt(s.depreciation_amount)}</td>
                 <td class="r">${fmt(s.closing_book_value)}</td>
+                <td style="font-size:10px;${s.disposal_type === '売却' ? 'color:#b91c1c;' : s.disposal_type === '除却' ? 'color:#92400e;' : ''}">${s.disposal_remark || ''}</td>
             </tr>`;
         }).join('');
+
+        const saleNotice = hasSale ? `<p style="margin-top:12px;padding:8px 12px;background:#fffbeb;border:1px solid #fbbf24;font-size:11px;color:#92400e;">⚠️ 注意：売却損益は事業所得ではなく譲渡所得（分離課税）です。確定申告書Bの「譲渡所得」欄に記載してください。</p>` : '';
 
         const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
         <title>減価償却費の計算明細書 ${year}年</title>
@@ -3710,15 +3854,17 @@ document.addEventListener('DOMContentLoaded', () => {
         <table>
             <thead><tr>
                 <th>資産名称</th><th>取得日</th><th>取得原価</th><th>耐用年数</th>
-                <th>償却方法</th><th>償却率</th><th>期首帳簿価額</th><th>本年分償却費</th><th>期末帳簿価額</th>
+                <th>償却方法</th><th>償却率</th><th>期首帳簿価額</th><th>本年分償却費</th><th>期末帳簿価額</th><th>備考</th>
             </tr></thead>
             <tbody>${rows}</tbody>
             <tfoot><tr>
                 <td colspan="7" class="r">合計</td>
                 <td class="r">${fmt(totalDep)}</td>
                 <td></td>
+                <td></td>
             </tr></tfoot>
         </table>
+        ${saleNotice}
         <script>window.onload=()=>window.print();<\/script>
         </body></html>`;
 

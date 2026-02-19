@@ -1346,6 +1346,52 @@ def delete_fixed_asset(asset_id: int, user_id: int = 0) -> bool:
         conn.close()
 
 
+def dispose_fixed_asset(asset_id: int, data: dict, user_id: int = 0) -> bool:
+    """Record disposal (売却 or 除却) of a fixed asset.
+    data: {disposal_type: '売却'|'除却', disposal_date: 'YYYY-MM-DD', disposal_price: int}
+    """
+    _now = "CURRENT_TIMESTAMP" if USE_PG else "datetime('now')"
+    conn = get_db()
+    try:
+        conn.execute(
+            P(f"""UPDATE fixed_assets SET
+                disposal_type = ?, disposal_date = ?, disposal_price = ?,
+                updated_at = {_now}
+                WHERE id = ? AND user_id = ? AND is_deleted = 0"""),
+            (data['disposal_type'], data['disposal_date'],
+             int(data.get('disposal_price', 0)),
+             asset_id, user_id)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+
+def cancel_disposal(asset_id: int, user_id: int = 0) -> bool:
+    """Cancel a disposal (undo 売却/除却)."""
+    _now = "CURRENT_TIMESTAMP" if USE_PG else "datetime('now')"
+    conn = get_db()
+    try:
+        conn.execute(
+            P(f"""UPDATE fixed_assets SET
+                disposal_type = '', disposal_date = '', disposal_price = 0,
+                updated_at = {_now}
+                WHERE id = ? AND user_id = ? AND is_deleted = 0"""),
+            (asset_id, user_id)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+
 def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
     """Calculate depreciation schedule for all active fixed assets.
 
@@ -1353,6 +1399,9 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
       年間償却額 = (取得原価 - 1) ÷ 耐用年数  (端数切捨て)
       初年度 = 年間償却額 × 使用月数 ÷ 12 (取得月〜12月, 端数切捨て)
       最終年度: 備忘価額1円になるまで
+
+    売却: closing_bv=0, 売却損益を計算, 備考に表示
+    除却: closing_bv=0, 残額全額が償却費, 備考に「除却」
 
     Returns list of dicts with per-asset depreciation details for the fiscal year.
     """
@@ -1365,14 +1414,27 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
         life = asset['useful_life']
         acq_date = asset['acquisition_date']  # YYYY-MM-DD
         method = asset.get('depreciation_method', '定額法')
+        disposal_type = asset.get('disposal_type', '') or ''
+        disposal_date = asset.get('disposal_date', '') or ''
+        disposal_price = int(asset.get('disposal_price', 0) or 0)
 
         # Parse acquisition date
         parts = acq_date.split('-')
         acq_year = int(parts[0])
         acq_month = int(parts[1]) if len(parts) > 1 else 1
 
+        # Parse disposal date if exists
+        disp_year = 0
+        if disposal_date and disposal_type:
+            disp_parts = disposal_date.split('-')
+            disp_year = int(disp_parts[0])
+
         # Skip assets acquired after fiscal year end
         if acq_year > fy:
+            continue
+
+        # Skip assets disposed before this fiscal year
+        if disp_year and disp_year < fy:
             continue
 
         # 定額法 calculation
@@ -1383,20 +1445,21 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
         cumulative_before = 0
         for yr in range(acq_year, fy):
             if yr == acq_year:
-                # 初年度: 月割計算 (取得月〜12月)
                 months_used = 12 - acq_month + 1
                 yr_dep = annual_amount * months_used // 12
             else:
                 yr_dep = annual_amount
-            # Don't exceed depreciable amount
             if cumulative_before + yr_dep >= depreciable:
                 yr_dep = depreciable - cumulative_before
             cumulative_before += yr_dep
             if cumulative_before >= depreciable:
                 break
 
-        # Already fully depreciated?
-        if cumulative_before >= depreciable:
+        opening_bv = cost - cumulative_before
+        remark = asset.get('notes', '')
+
+        # Already fully depreciated (before disposal check)?
+        if cumulative_before >= depreciable and not (disp_year == fy and disposal_type):
             result.append({
                 'id': asset['id'],
                 'asset_name': asset['asset_name'],
@@ -1404,23 +1467,72 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                 'acquisition_cost': cost,
                 'useful_life': life,
                 'depreciation_method': method,
-                'notes': asset.get('notes', ''),
+                'notes': remark,
                 'opening_book_value': 1,
                 'depreciation_amount': 0,
                 'closing_book_value': 1,
                 'annual_rate': round(1 / life, 4) if life else 0,
+                'disposal_type': '',
+                'disposal_remark': '',
             })
             continue
 
-        # Calculate this fiscal year's depreciation
-        opening_bv = cost - cumulative_before
+        # --- Handle disposal in this fiscal year ---
+        if disp_year == fy and disposal_type:
+            if disposal_type == '除却':
+                # 除却: remaining book value (minus 備忘価額) becomes depreciation
+                this_year_dep = opening_bv - 1 if opening_bv > 1 else 0
+                # If fully depreciated, remove 備忘価額
+                if opening_bv <= 1:
+                    this_year_dep = 0
+                result.append({
+                    'id': asset['id'],
+                    'asset_name': asset['asset_name'],
+                    'acquisition_date': acq_date,
+                    'acquisition_cost': cost,
+                    'useful_life': life,
+                    'depreciation_method': method,
+                    'notes': remark,
+                    'opening_book_value': opening_bv,
+                    'depreciation_amount': this_year_dep,
+                    'closing_book_value': 0,
+                    'annual_rate': round(1 / life, 4) if life else 0,
+                    'disposal_type': '除却',
+                    'disposal_remark': f'除却（固定資産除却損 {opening_bv - 1:,}円）' if opening_bv > 1 else '除却（償却済）',
+                })
+            elif disposal_type == '売却':
+                # 売却: book value → 0, gain/loss = disposal_price - opening_bv
+                gain_loss = disposal_price - opening_bv
+                if gain_loss >= 0:
+                    gl_text = f'売却益 {gain_loss:,}円'
+                else:
+                    gl_text = f'売却損 {abs(gain_loss):,}円'
+                # Depreciation for sale year = book value (asset removed)
+                this_year_dep = opening_bv  # 帳簿価額全額が費用
+                result.append({
+                    'id': asset['id'],
+                    'asset_name': asset['asset_name'],
+                    'acquisition_date': acq_date,
+                    'acquisition_cost': cost,
+                    'useful_life': life,
+                    'depreciation_method': method,
+                    'notes': remark,
+                    'opening_book_value': opening_bv,
+                    'depreciation_amount': 0,  # 通常の減価償却は0
+                    'closing_book_value': 0,
+                    'annual_rate': round(1 / life, 4) if life else 0,
+                    'disposal_type': '売却',
+                    'disposal_remark': f'売却（売却額 {disposal_price:,}円 / {gl_text}）',
+                })
+            continue
+
+        # --- Normal depreciation ---
         if fy == acq_year:
             months_used = 12 - acq_month + 1
             this_year_dep = annual_amount * months_used // 12
         else:
             this_year_dep = annual_amount
 
-        # Don't exceed remaining depreciable amount
         remaining = depreciable - cumulative_before
         if this_year_dep > remaining:
             this_year_dep = remaining
@@ -1434,11 +1546,13 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
             'acquisition_cost': cost,
             'useful_life': life,
             'depreciation_method': method,
-            'notes': asset.get('notes', ''),
+            'notes': remark,
             'opening_book_value': opening_bv,
             'depreciation_amount': this_year_dep,
             'closing_book_value': closing_bv,
             'annual_rate': round(1 / life, 4) if life else 0,
+            'disposal_type': '',
+            'disposal_remark': '',
         })
 
     return result

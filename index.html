@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=44">
+    <link rel="stylesheet" href="style.css?v=45">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -500,6 +500,7 @@
                     <div class="sub-tab-nav">
                         <button class="sub-tab-btn active" data-fa-tab="fa-register">登録</button>
                         <button class="sub-tab-btn" data-fa-tab="fa-list">一覧</button>
+                        <button class="sub-tab-btn" data-fa-tab="fa-disposal">売却・除却</button>
                         <button class="sub-tab-btn" data-fa-tab="fa-depreciation">減価償却明細書</button>
                         <button class="sub-tab-btn" data-fa-tab="fa-output">アウトプット</button>
                     </div>
@@ -577,6 +578,70 @@
                         <p id="fa-list-empty" class="text-muted" style="display:none;">固定資産がまだ登録されていません。</p>
                     </div>
 
+                    <!-- Tab: 売却・除却 -->
+                    <div id="fa-disposal" class="fa-tab-content">
+                        <div class="fa-card">
+                            <div class="fa-header">
+                                <h2 class="fa-title">固定資産の売却・除却</h2>
+                                <p class="fa-ai-hint-text" style="font-size:0.75rem;color:#64748b;">対象資産を下の一覧から選択してください</p>
+                            </div>
+                            <form id="fa-disposal-form" autocomplete="off">
+                                <input type="hidden" id="fa-disp-asset-id" value="">
+                                <div class="fa-table-wrap">
+                                    <table class="fa-input-table">
+                                        <thead>
+                                            <tr>
+                                                <th class="fa-th" style="min-width:160px;">対象資産</th>
+                                                <th class="fa-th" style="width:100px;">種別</th>
+                                                <th class="fa-th" style="width:130px;">売却/除却日</th>
+                                                <th class="fa-th" style="width:130px;">売却額（税込）</th>
+                                                <th class="fa-th" style="width:70px;"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr class="fa-input-row">
+                                                <td><input type="text" id="fa-disp-asset-name" readonly placeholder="下の一覧から選択" style="cursor:pointer;background:#f8fafc;"></td>
+                                                <td>
+                                                    <select id="fa-disp-type">
+                                                        <option value="除却">除却</option>
+                                                        <option value="売却">売却</option>
+                                                    </select>
+                                                </td>
+                                                <td><input type="date" id="fa-disp-date" required></td>
+                                                <td><input type="number" id="fa-disp-price" min="0" placeholder="0" value="0"></td>
+                                                <td>
+                                                    <button type="submit" class="btn-fa-submit" title="実行">実行</button>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </form>
+                            <div class="fa-disposal-notice" style="margin-top:0.75rem;padding:0.75rem 1rem;background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;font-size:0.8rem;color:#92400e;">
+                                ⚠️ <b>注意：</b>個人事業主の場合、固定資産の売却損益は<b>事業所得ではなく譲渡所得</b>（分離課税）となります。売却益・売却損は確定申告書Bの「譲渡所得」欄に記載してください。
+                            </div>
+                        </div>
+
+                        <h3 class="card-subtitle" style="margin-top:1.5rem;">売却・除却対象の選択</h3>
+                        <p class="text-muted" style="font-size:0.8rem;margin-bottom:0.5rem;">資産をクリックすると上のフォームに反映されます。</p>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>資産名称</th>
+                                        <th>取得日</th>
+                                        <th class="text-right">取得原価</th>
+                                        <th>耐用年数</th>
+                                        <th>状態</th>
+                                        <th style="width:80px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fa-disp-list-tbody"></tbody>
+                            </table>
+                        </div>
+                        <p id="fa-disp-list-empty" class="text-muted" style="display:none;">固定資産がまだ登録されていません。</p>
+                    </div>
+
                     <!-- Tab: 減価償却明細書 -->
                     <div id="fa-depreciation" class="fa-tab-content">
                         <div class="fa-depr-header">
@@ -600,11 +665,15 @@
                                         <th class="text-right">期首帳簿価額</th>
                                         <th class="text-right">本年分償却費</th>
                                         <th class="text-right">期末帳簿価額</th>
+                                        <th>備考</th>
                                     </tr>
                                 </thead>
                                 <tbody id="fa-depr-tbody"></tbody>
                                 <tfoot id="fa-depr-tfoot"></tfoot>
                             </table>
+                        </div>
+                        <div id="fa-depr-notice" class="fa-disposal-notice" style="margin-top:0.75rem;padding:0.75rem 1rem;background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;font-size:0.8rem;color:#92400e;display:none;">
+                            ⚠️ <b>注意：</b>売却損益は<b>事業所得ではなく譲渡所得</b>（分離課税）です。確定申告書Bの「譲渡所得」欄に記載してください。
                         </div>
                         <p id="fa-depr-empty" class="text-muted" style="display:none;">固定資産がありません。先に「登録」タブから資産を登録してください。</p>
                     </div>
@@ -845,7 +914,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=44"></script>
+    <script src="script.js?v=45"></script>
 </body>
 
 </html>
