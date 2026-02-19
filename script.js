@@ -3470,7 +3470,8 @@ document.addEventListener('DOMContentLoaded', () => {
             faAiBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> 判定中...';
             if (faAiHint) faAiHint.textContent = '🔄 AIが耐用年数を判定中...';
             try {
-                const res = await fetchAPI('/api/fixed-assets/ai-useful-life', 'POST', { asset_name: name });
+                const apiKey = localStorage.getItem('gemini_api_key');
+                const res = await fetchAPI('/api/fixed-assets/ai-useful-life', 'POST', { asset_name: name, gemini_api_key: apiKey });
                 if (res.useful_life) {
                     faLife.value = res.useful_life;
                     // Auto-fill asset_category from AI result

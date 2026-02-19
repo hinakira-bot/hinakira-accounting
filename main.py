@@ -1487,10 +1487,14 @@ def api_fixed_assets_ai_useful_life():
         return jsonify({"error": "Not authenticated"}), 401
     data = request.json or {}
     asset_name = (data.get('asset_name') or '').strip()
+    gemini_api_key = data.get('gemini_api_key', '')
     if not asset_name:
         return jsonify({"error": "資産名を入力してください"}), 400
+    if not gemini_api_key:
+        return jsonify({"error": "Gemini APIキーが設定されていません"}), 401
     try:
         ai = _get_ai_service()
+        ai.configure_gemini(gemini_api_key)
         result = ai.estimate_useful_life(asset_name, user['id'])
         return jsonify(result)
     except Exception as e:
