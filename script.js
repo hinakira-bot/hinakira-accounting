@@ -3834,7 +3834,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </tr>`;
         }).join('');
 
-        const saleNotice = hasSale ? `<p style="margin-top:12px;padding:8px 12px;background:#fffbeb;border:1px solid #fbbf24;font-size:11px;color:#92400e;">⚠️ 注意：売却損益は事業所得ではなく譲渡所得（分離課税）です。確定申告書Bの「譲渡所得」欄に記載してください。</p>` : '';
+        const saleNotice = hasSale ? `<p style="margin-top:12px;padding:8px 12px;background:#fffbeb;border:1px solid #fbbf24;font-size:11px;color:#92400e;">⚠️ 注意：売却損益は事業所得ではなく譲渡所得となります。確定申告書Bの「譲渡所得」欄に記載してください。</p>` : '';
 
         const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
         <title>減価償却費の計算明細書 ${year}年</title>
