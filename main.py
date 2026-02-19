@@ -508,7 +508,9 @@ def api_journal_recent():
 @app.route('/api/journal', methods=['POST'])
 def api_journal_create():
     """Create one or more journal entries."""
+    print(f"[Journal POST] Request received", flush=True)
     uid = get_user_id()
+    print(f"[Journal POST] user_id={uid}", flush=True)
     data = request.json
     if not data:
         return jsonify({"error": "No data provided"}), 400
@@ -520,8 +522,10 @@ def api_journal_create():
     else:
         entries = [data]
 
+    print(f"[Journal POST] Creating {len(entries)} entries", flush=True)
     try:
         ids = models.create_journal_entries_batch(entries, user_id=uid)
+        print(f"[Journal POST] Created ids={ids}", flush=True)
         successful = [i for i in ids if i is not None]
         return jsonify({
             "status": "success",
