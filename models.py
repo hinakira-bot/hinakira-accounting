@@ -1257,3 +1257,188 @@ def revoke_license(license_key_id: int) -> dict:
         return {"error": str(e)}
     finally:
         conn.close()
+
+
+# =====================================================
+#  Fixed Assets (固定資産台帳)
+# =====================================================
+
+def create_fixed_asset(data: dict, user_id: int = 0) -> int:
+    """Create a new fixed asset record."""
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            P("""INSERT INTO fixed_assets
+                (user_id, asset_name, acquisition_date, useful_life,
+                 acquisition_cost, depreciation_method, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)"""),
+            (user_id, data['asset_name'], data['acquisition_date'],
+             int(data['useful_life']), int(data['acquisition_cost']),
+             data.get('depreciation_method', '定額法'),
+             data.get('notes', ''))
+        )
+        conn.commit()
+        new_id = cur.lastrowid if not USE_PG else None
+        if USE_PG:
+            row = conn.execute("SELECT lastval()").fetchone()
+            new_id = row['lastval']
+        return new_id
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+
+def get_fixed_assets(user_id: int = 0) -> list:
+    """Get all active fixed assets for a user."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            P("SELECT * FROM fixed_assets WHERE user_id = ? AND is_deleted = 0 ORDER BY acquisition_date DESC"),
+            (user_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_fixed_asset(asset_id: int, data: dict, user_id: int = 0) -> bool:
+    """Update a fixed asset."""
+    _now = "CURRENT_TIMESTAMP" if USE_PG else "datetime('now')"
+    conn = get_db()
+    try:
+        conn.execute(
+            P(f"""UPDATE fixed_assets SET
+                asset_name = ?, acquisition_date = ?, useful_life = ?,
+                acquisition_cost = ?, depreciation_method = ?, notes = ?,
+                updated_at = {_now}
+                WHERE id = ? AND user_id = ? AND is_deleted = 0"""),
+            (data['asset_name'], data['acquisition_date'],
+             int(data['useful_life']), int(data['acquisition_cost']),
+             data.get('depreciation_method', '定額法'),
+             data.get('notes', ''),
+             asset_id, user_id)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+
+def delete_fixed_asset(asset_id: int, user_id: int = 0) -> bool:
+    """Soft-delete a fixed asset."""
+    conn = get_db()
+    try:
+        conn.execute(
+            P("UPDATE fixed_assets SET is_deleted = 1 WHERE id = ? AND user_id = ?"),
+            (asset_id, user_id)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+
+def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
+    """Calculate depreciation schedule for all active fixed assets.
+
+    定額法 (Straight-Line Method):
+      年間償却額 = (取得原価 - 1) ÷ 耐用年数  (端数切捨て)
+      初年度 = 年間償却額 × 使用月数 ÷ 12 (取得月〜12月, 端数切捨て)
+      最終年度: 備忘価額1円になるまで
+
+    Returns list of dicts with per-asset depreciation details for the fiscal year.
+    """
+    assets = get_fixed_assets(user_id)
+    fy = int(fiscal_year)
+    result = []
+
+    for asset in assets:
+        cost = asset['acquisition_cost']
+        life = asset['useful_life']
+        acq_date = asset['acquisition_date']  # YYYY-MM-DD
+        method = asset.get('depreciation_method', '定額法')
+
+        # Parse acquisition date
+        parts = acq_date.split('-')
+        acq_year = int(parts[0])
+        acq_month = int(parts[1]) if len(parts) > 1 else 1
+
+        # Skip assets acquired after fiscal year end
+        if acq_year > fy:
+            continue
+
+        # 定額法 calculation
+        depreciable = cost - 1  # 備忘価額1円
+        annual_amount = depreciable // life  # 年間償却額
+
+        # Calculate cumulative depreciation up to previous fiscal year
+        cumulative_before = 0
+        for yr in range(acq_year, fy):
+            if yr == acq_year:
+                # 初年度: 月割計算 (取得月〜12月)
+                months_used = 12 - acq_month + 1
+                yr_dep = annual_amount * months_used // 12
+            else:
+                yr_dep = annual_amount
+            # Don't exceed depreciable amount
+            if cumulative_before + yr_dep >= depreciable:
+                yr_dep = depreciable - cumulative_before
+            cumulative_before += yr_dep
+            if cumulative_before >= depreciable:
+                break
+
+        # Already fully depreciated?
+        if cumulative_before >= depreciable:
+            result.append({
+                'id': asset['id'],
+                'asset_name': asset['asset_name'],
+                'acquisition_date': acq_date,
+                'acquisition_cost': cost,
+                'useful_life': life,
+                'depreciation_method': method,
+                'notes': asset.get('notes', ''),
+                'opening_book_value': 1,
+                'depreciation_amount': 0,
+                'closing_book_value': 1,
+                'annual_rate': round(1 / life, 4) if life else 0,
+            })
+            continue
+
+        # Calculate this fiscal year's depreciation
+        opening_bv = cost - cumulative_before
+        if fy == acq_year:
+            months_used = 12 - acq_month + 1
+            this_year_dep = annual_amount * months_used // 12
+        else:
+            this_year_dep = annual_amount
+
+        # Don't exceed remaining depreciable amount
+        remaining = depreciable - cumulative_before
+        if this_year_dep > remaining:
+            this_year_dep = remaining
+
+        closing_bv = cost - cumulative_before - this_year_dep
+
+        result.append({
+            'id': asset['id'],
+            'asset_name': asset['asset_name'],
+            'acquisition_date': acq_date,
+            'acquisition_cost': cost,
+            'useful_life': life,
+            'depreciation_method': method,
+            'notes': asset.get('notes', ''),
+            'opening_book_value': opening_bv,
+            'depreciation_amount': this_year_dep,
+            'closing_book_value': closing_bv,
+            'annual_rate': round(1 / life, 4) if life else 0,
+        })
+
+    return result

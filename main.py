@@ -1350,6 +1350,84 @@ def api_admin_revoke():
 
 
 # ============================
+#  Fixed Assets API (固定資産台帳)
+# ============================
+@app.route('/api/fixed-assets', methods=['GET'])
+def api_fixed_assets_list():
+    """List all fixed assets for current user."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    assets = models.get_fixed_assets(user['id'])
+    return jsonify({"assets": assets})
+
+
+@app.route('/api/fixed-assets', methods=['POST'])
+def api_fixed_assets_create():
+    """Create a new fixed asset."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    data = request.json or {}
+    required = ['asset_name', 'acquisition_date', 'useful_life', 'acquisition_cost']
+    for field in required:
+        if not data.get(field):
+            return jsonify({"error": f"{field} は必須です"}), 400
+    new_id = models.create_fixed_asset(data, user['id'])
+    return jsonify({"id": new_id, "status": "created"})
+
+
+@app.route('/api/fixed-assets/<int:asset_id>', methods=['PUT'])
+def api_fixed_assets_update(asset_id):
+    """Update a fixed asset."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    data = request.json or {}
+    models.update_fixed_asset(asset_id, data, user['id'])
+    return jsonify({"status": "updated"})
+
+
+@app.route('/api/fixed-assets/<int:asset_id>', methods=['DELETE'])
+def api_fixed_assets_delete(asset_id):
+    """Delete a fixed asset (soft delete)."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    models.delete_fixed_asset(asset_id, user['id'])
+    return jsonify({"status": "deleted"})
+
+
+@app.route('/api/fixed-assets/depreciation', methods=['GET'])
+def api_fixed_assets_depreciation():
+    """Calculate depreciation schedule for the given fiscal year."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    fiscal_year = request.args.get('fiscal_year', '2025')
+    schedule = models.calculate_depreciation(user['id'], fiscal_year)
+    return jsonify({"fiscal_year": fiscal_year, "schedule": schedule})
+
+
+@app.route('/api/fixed-assets/ai-useful-life', methods=['POST'])
+def api_fixed_assets_ai_useful_life():
+    """Use AI to estimate useful life for a given asset name."""
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    data = request.json or {}
+    asset_name = (data.get('asset_name') or '').strip()
+    if not asset_name:
+        return jsonify({"error": "資産名を入力してください"}), 400
+    try:
+        ai = _get_ai_service()
+        result = ai.estimate_useful_life(asset_name, user['id'])
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================
 #  Admin Page Route
 # ============================
 @app.route('/admin')

@@ -203,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'opening-balance': () => loadOpeningBalances(),
         'backup': () => {},
         'output': () => {},
+        'fixed-assets': () => loadFixedAssetsList(),
     };
 
     function showMenu() {
@@ -3371,6 +3372,356 @@ document.addEventListener('DOMContentLoaded', () => {
             sendChatMessage();
         }
     });
+
+    // ============================================================
+    //  Section: Fixed Assets (固定資産台帳)
+    // ============================================================
+    let faAssetsCache = [];
+    let faDepreciationCache = [];
+
+    // Sub-tab switching
+    document.querySelectorAll('[data-fa-tab]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('[data-fa-tab]').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.fa-tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            const target = document.getElementById(btn.dataset.faTab);
+            if (target) target.classList.add('active');
+            // Load data when switching tabs
+            if (btn.dataset.faTab === 'fa-list') loadFixedAssetsList();
+            if (btn.dataset.faTab === 'fa-depreciation') loadDepreciationSchedule();
+        });
+    });
+
+    // --- Registration form ---
+    const faForm = document.getElementById('fa-form');
+    const faEditId = document.getElementById('fa-edit-id');
+    const faName = document.getElementById('fa-name');
+    const faDate = document.getElementById('fa-date');
+    const faLife = document.getElementById('fa-life');
+    const faCost = document.getElementById('fa-cost');
+    const faMethod = document.getElementById('fa-method');
+    const faNotes = document.getElementById('fa-notes');
+    const faCancelBtn = document.getElementById('fa-cancel-btn');
+    const faAiBtn = document.getElementById('fa-ai-btn');
+    const faAiHint = document.getElementById('fa-ai-hint');
+
+    if (faForm) {
+        faForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const data = {
+                asset_name: faName.value.trim(),
+                acquisition_date: faDate.value,
+                useful_life: parseInt(faLife.value) || 0,
+                acquisition_cost: parseInt(faCost.value) || 0,
+                depreciation_method: faMethod.value,
+                notes: faNotes.value.trim(),
+            };
+            if (!data.asset_name || !data.acquisition_date || !data.useful_life || !data.acquisition_cost) {
+                showToast('必須項目を入力してください', true);
+                return;
+            }
+            try {
+                const editId = faEditId.value;
+                if (editId) {
+                    await fetchAPI(`/api/fixed-assets/${editId}`, 'PUT', data);
+                    showToast('更新しました');
+                } else {
+                    await fetchAPI('/api/fixed-assets', 'POST', data);
+                    showToast('登録しました');
+                }
+                resetFaForm();
+                loadFixedAssetsList();
+            } catch (err) {
+                showToast('保存に失敗しました', true);
+            }
+        });
+    }
+
+    function resetFaForm() {
+        faEditId.value = '';
+        faName.value = '';
+        faDate.value = '';
+        faLife.value = '';
+        faCost.value = '';
+        faMethod.value = '定額法';
+        faNotes.value = '';
+        faAiHint.textContent = '';
+        faCancelBtn.style.display = 'none';
+    }
+
+    if (faCancelBtn) {
+        faCancelBtn.addEventListener('click', resetFaForm);
+    }
+
+    // --- AI useful life estimation ---
+    if (faAiBtn) {
+        faAiBtn.addEventListener('click', async () => {
+            const name = faName.value.trim();
+            if (!name) {
+                showToast('資産名称を入力してからAI判定を押してください', true);
+                return;
+            }
+            faAiBtn.disabled = true;
+            faAiBtn.textContent = '🤖 判定中...';
+            faAiHint.textContent = '';
+            try {
+                const res = await fetchAPI('/api/fixed-assets/ai-useful-life', 'POST', { asset_name: name });
+                if (res.useful_life) {
+                    faLife.value = res.useful_life;
+                    faAiHint.textContent = `AI判定: ${res.asset_category || ''} ${res.useful_life}年（${res.reasoning || ''})`;
+                    faAiHint.classList.add('fa-ai-hint-show');
+                } else {
+                    showToast('AI判定できませんでした', true);
+                }
+            } catch (err) {
+                showToast('AI判定エラー', true);
+            } finally {
+                faAiBtn.disabled = false;
+                faAiBtn.textContent = '🤖 AI判定';
+            }
+        });
+    }
+
+    // --- Fixed assets list ---
+    async function loadFixedAssetsList() {
+        try {
+            const data = await fetchAPI('/api/fixed-assets');
+            faAssetsCache = data.assets || [];
+            const tbody = document.getElementById('fa-list-tbody');
+            const empty = document.getElementById('fa-list-empty');
+            if (!tbody) return;
+
+            if (faAssetsCache.length === 0) {
+                tbody.innerHTML = '';
+                if (empty) empty.style.display = '';
+                return;
+            }
+            if (empty) empty.style.display = 'none';
+
+            tbody.innerHTML = faAssetsCache.map(a => `
+                <tr data-id="${a.id}">
+                    <td>${a.asset_name || ''}</td>
+                    <td>${a.acquisition_date || ''}</td>
+                    <td class="text-right">${fmt(a.acquisition_cost)}</td>
+                    <td>${a.useful_life}年</td>
+                    <td>${a.depreciation_method || '定額法'}</td>
+                    <td>${a.notes || ''}</td>
+                    <td><button class="btn-row-delete" data-id="${a.id}" title="削除">✕</button></td>
+                </tr>
+            `).join('');
+
+            // Row click → edit
+            tbody.querySelectorAll('tr').forEach(row => {
+                row.addEventListener('click', (ev) => {
+                    if (ev.target.closest('.btn-row-delete')) return;
+                    const id = row.dataset.id;
+                    const asset = faAssetsCache.find(a => String(a.id) === String(id));
+                    if (asset) editFixedAsset(asset);
+                });
+            });
+
+            // Delete button
+            tbody.querySelectorAll('.btn-row-delete').forEach(btn => {
+                btn.addEventListener('click', async (ev) => {
+                    ev.stopPropagation();
+                    if (!confirm('この固定資産を削除しますか？')) return;
+                    try {
+                        await fetchAPI(`/api/fixed-assets/${btn.dataset.id}`, 'DELETE');
+                        showToast('削除しました');
+                        loadFixedAssetsList();
+                    } catch (err) {
+                        showToast('削除に失敗しました', true);
+                    }
+                });
+            });
+        } catch (err) {
+            console.error('Fixed assets load error:', err);
+        }
+    }
+
+    function editFixedAsset(asset) {
+        // Switch to register tab
+        document.querySelectorAll('[data-fa-tab]').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.fa-tab-content').forEach(c => c.classList.remove('active'));
+        const regBtn = document.querySelector('[data-fa-tab="fa-register"]');
+        const regTab = document.getElementById('fa-register');
+        if (regBtn) regBtn.classList.add('active');
+        if (regTab) regTab.classList.add('active');
+
+        // Fill form
+        faEditId.value = asset.id;
+        faName.value = asset.asset_name || '';
+        faDate.value = asset.acquisition_date || '';
+        faLife.value = asset.useful_life || '';
+        faCost.value = asset.acquisition_cost || '';
+        faMethod.value = asset.depreciation_method || '定額法';
+        faNotes.value = asset.notes || '';
+        faCancelBtn.style.display = '';
+        faAiHint.textContent = '';
+
+        // Scroll to form
+        faForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // --- Depreciation schedule ---
+    async function loadDepreciationSchedule() {
+        const yearEl = document.getElementById('fa-depr-year');
+        const year = yearEl ? yearEl.value : '2025';
+        try {
+            const data = await fetchAPI(`/api/fixed-assets/depreciation?fiscal_year=${year}`);
+            faDepreciationCache = data.schedule || [];
+            renderDepreciationTable(faDepreciationCache);
+        } catch (err) {
+            console.error('Depreciation load error:', err);
+        }
+    }
+
+    function renderDepreciationTable(schedule) {
+        const tbody = document.getElementById('fa-depr-tbody');
+        const tfoot = document.getElementById('fa-depr-tfoot');
+        const empty = document.getElementById('fa-depr-empty');
+        if (!tbody) return;
+
+        if (schedule.length === 0) {
+            tbody.innerHTML = '';
+            tfoot.innerHTML = '';
+            if (empty) empty.style.display = '';
+            return;
+        }
+        if (empty) empty.style.display = 'none';
+
+        let totalDepreciation = 0;
+        tbody.innerHTML = schedule.map(s => {
+            totalDepreciation += s.depreciation_amount;
+            return `
+                <tr>
+                    <td>${s.asset_name}</td>
+                    <td>${s.acquisition_date}</td>
+                    <td class="text-right">${fmt(s.acquisition_cost)}</td>
+                    <td>${s.useful_life}年</td>
+                    <td>${s.depreciation_method}</td>
+                    <td>${s.annual_rate ? (s.annual_rate * 100).toFixed(1) + '%' : '-'}</td>
+                    <td class="text-right">${fmt(s.opening_book_value)}</td>
+                    <td class="text-right">${fmt(s.depreciation_amount)}</td>
+                    <td class="text-right">${fmt(s.closing_book_value)}</td>
+                </tr>`;
+        }).join('');
+
+        tfoot.innerHTML = `
+            <tr style="font-weight:600;background:#f8fafc;">
+                <td colspan="7" class="text-right">合計</td>
+                <td class="text-right">${fmt(totalDepreciation)}</td>
+                <td></td>
+            </tr>`;
+    }
+
+    const faDeprCalcBtn = document.getElementById('fa-depr-calc-btn');
+    if (faDeprCalcBtn) {
+        faDeprCalcBtn.addEventListener('click', loadDepreciationSchedule);
+    }
+
+    // --- Fixed assets output ---
+    const faOutListCsv = document.getElementById('fa-out-list-csv');
+    const faOutDeprCsv = document.getElementById('fa-out-depr-csv');
+    const faOutDeprPdf = document.getElementById('fa-out-depr-pdf');
+
+    if (faOutListCsv) {
+        faOutListCsv.addEventListener('click', async () => {
+            try {
+                const data = await fetchAPI('/api/fixed-assets');
+                const assets = data.assets || [];
+                if (assets.length === 0) { showToast('データがありません', true); return; }
+                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,備考\n';
+                assets.forEach(a => {
+                    csv += `"${a.asset_name}",${a.acquisition_date},${a.acquisition_cost},${a.useful_life},"${a.depreciation_method}","${a.notes || ''}"\n`;
+                });
+                downloadBlob(csv, `固定資産一覧_${todayStr()}.csv`, 'text/csv;charset=utf-8');
+                showToast('CSVをダウンロードしました');
+            } catch (err) { showToast('エラー', true); }
+        });
+    }
+
+    if (faOutDeprCsv) {
+        faOutDeprCsv.addEventListener('click', async () => {
+            const year = document.getElementById('fa-out-year')?.value || '2025';
+            try {
+                const data = await fetchAPI(`/api/fixed-assets/depreciation?fiscal_year=${year}`);
+                const schedule = data.schedule || [];
+                if (schedule.length === 0) { showToast('データがありません', true); return; }
+                let csv = '\uFEFF資産名称,取得日,取得原価,耐用年数,償却方法,償却率,期首帳簿価額,本年分償却費,期末帳簿価額\n';
+                schedule.forEach(s => {
+                    csv += `"${s.asset_name}",${s.acquisition_date},${s.acquisition_cost},${s.useful_life},"${s.depreciation_method}",${s.annual_rate},${s.opening_book_value},${s.depreciation_amount},${s.closing_book_value}\n`;
+                });
+                downloadBlob(csv, `減価償却明細書_${year}年_${todayStr()}.csv`, 'text/csv;charset=utf-8');
+                showToast('CSVをダウンロードしました');
+            } catch (err) { showToast('エラー', true); }
+        });
+    }
+
+    if (faOutDeprPdf) {
+        faOutDeprPdf.addEventListener('click', async () => {
+            const year = document.getElementById('fa-out-year')?.value || '2025';
+            try {
+                const data = await fetchAPI(`/api/fixed-assets/depreciation?fiscal_year=${year}`);
+                const schedule = data.schedule || [];
+                if (schedule.length === 0) { showToast('データがありません', true); return; }
+                printDepreciationSchedule(schedule, year);
+            } catch (err) { showToast('エラー', true); }
+        });
+    }
+
+    function printDepreciationSchedule(schedule, year) {
+        let totalDep = 0;
+        const rows = schedule.map(s => {
+            totalDep += s.depreciation_amount;
+            return `<tr>
+                <td>${s.asset_name}</td>
+                <td>${s.acquisition_date}</td>
+                <td class="r">${fmt(s.acquisition_cost)}</td>
+                <td>${s.useful_life}年</td>
+                <td>${s.depreciation_method}</td>
+                <td>${s.annual_rate ? (s.annual_rate * 100).toFixed(1) + '%' : '-'}</td>
+                <td class="r">${fmt(s.opening_book_value)}</td>
+                <td class="r">${fmt(s.depreciation_amount)}</td>
+                <td class="r">${fmt(s.closing_book_value)}</td>
+            </tr>`;
+        }).join('');
+
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+        <title>減価償却費の計算明細書 ${year}年</title>
+        <style>
+            body{font-family:'Noto Sans JP',sans-serif;margin:20px;font-size:12px;}
+            h1{font-size:16px;text-align:center;margin-bottom:4px;}
+            h2{font-size:12px;text-align:center;color:#666;margin-bottom:16px;}
+            table{width:100%;border-collapse:collapse;margin-top:12px;}
+            th,td{border:1px solid #333;padding:6px 8px;font-size:11px;}
+            th{background:#f0f0f0;font-weight:600;}
+            .r{text-align:right;}
+            tfoot td{font-weight:600;background:#f8f8f8;}
+            @media print{body{margin:10mm;}}
+        </style></head><body>
+        <h1>減価償却費の計算明細書</h1>
+        <h2>${year}年分</h2>
+        <table>
+            <thead><tr>
+                <th>資産名称</th><th>取得日</th><th>取得原価</th><th>耐用年数</th>
+                <th>償却方法</th><th>償却率</th><th>期首帳簿価額</th><th>本年分償却費</th><th>期末帳簿価額</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+            <tfoot><tr>
+                <td colspan="7" class="r">合計</td>
+                <td class="r">${fmt(totalDep)}</td>
+                <td></td>
+            </tr></tfoot>
+        </table>
+        <script>window.onload=()=>window.print();<\/script>
+        </body></html>`;
+
+        const w = window.open('', '_blank');
+        w.document.write(html);
+        w.document.close();
+    }
 
     // ============================================================
     //  Section 16: Keyboard Shortcuts

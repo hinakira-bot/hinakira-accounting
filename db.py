@@ -508,6 +508,30 @@ def migrate_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_license_activations_key ON license_activations(license_key_id)")
             print("Migration: Created license_activations table.")
 
+        if not _table_exists(conn, 'fixed_assets'):
+            if USE_PG:
+                cur.execute("""CREATE TABLE IF NOT EXISTS fixed_assets (
+                    id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL,
+                    asset_name TEXT NOT NULL, acquisition_date TEXT NOT NULL,
+                    useful_life INTEGER NOT NULL, acquisition_cost INTEGER NOT NULL,
+                    depreciation_method TEXT DEFAULT '定額法',
+                    notes TEXT DEFAULT '',
+                    is_deleted INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            else:
+                cur.execute("""CREATE TABLE IF NOT EXISTS fixed_assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                    asset_name TEXT NOT NULL, acquisition_date TEXT NOT NULL,
+                    useful_life INTEGER NOT NULL, acquisition_cost INTEGER NOT NULL,
+                    depreciation_method TEXT DEFAULT '定額法',
+                    notes TEXT DEFAULT '',
+                    is_deleted INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now')))""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_fixed_assets_user ON fixed_assets(user_id)")
+            print("Migration: Created fixed_assets table.")
+
         conn.commit()
         print("Migration completed successfully.")
     except Exception as e:

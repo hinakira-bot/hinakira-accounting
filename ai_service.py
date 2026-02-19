@@ -215,6 +215,42 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
         raise e
 
 
+def estimate_useful_life(asset_name: str, user_id: int = 0) -> dict:
+    """Use Gemini AI to estimate useful life based on Japanese tax law (耐用年数表)."""
+    genai = _get_genai()
+    prompt = f"""
+あなたは日本の税務の専門家です。
+以下の固定資産の名称から、国税庁の「減価償却資産の耐用年数表」に基づいて耐用年数を判定してください。
+
+【資産名】{asset_name}
+
+以下のJSON形式で回答してください。Markdownは不要です。
+{{
+  "useful_life": 耐用年数(数値),
+  "asset_category": "資産の種類（例：器具備品、車両運搬具、機械装置、建物等）",
+  "reasoning": "判定理由（1行で簡潔に）"
+}}
+"""
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        # Clean JSON
+        if "```json" in text:
+            text = text.split("```json")[-1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        s = text.find('{')
+        e = text.rfind('}')
+        if s != -1 and e != -1:
+            text = text[s:e + 1]
+        result = json.loads(text)
+        return result
+    except Exception as e:
+        print(f"AI useful life estimation error: {e}")
+        return {"useful_life": 4, "asset_category": "不明", "reasoning": "AI判定エラー。デフォルト4年を設定。"}
+
+
 def clean_json(text: str) -> str:
     """Clean AI response to extract valid JSON."""
     text = text.strip()

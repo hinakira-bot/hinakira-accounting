@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=42">
+    <link rel="stylesheet" href="style.css?v=43">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -92,6 +92,10 @@
                     </button>
                 </div>
                 <div class="menu-grid-sub">
+                    <button class="menu-tile-sm" data-view="fixed-assets">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                        固定資産台帳
+                    </button>
                     <button class="menu-tile-sm" data-view="output">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         アウトプット
@@ -489,6 +493,148 @@
                 </div>
             </section>
 
+            <!-- View: 固定資産台帳 -->
+            <section id="view-fixed-assets" class="content-view">
+                <div class="card">
+                    <h2 class="card-title">固定資産台帳</h2>
+                    <div class="sub-tab-nav">
+                        <button class="sub-tab-btn active" data-fa-tab="fa-register">登録</button>
+                        <button class="sub-tab-btn" data-fa-tab="fa-list">一覧</button>
+                        <button class="sub-tab-btn" data-fa-tab="fa-depreciation">減価償却明細書</button>
+                        <button class="sub-tab-btn" data-fa-tab="fa-output">アウトプット</button>
+                    </div>
+
+                    <!-- Tab: 登録 -->
+                    <div id="fa-register" class="fa-tab-content active">
+                        <h3 class="card-subtitle" style="margin-top:1rem;">固定資産の登録</h3>
+                        <form id="fa-form" autocomplete="off">
+                            <input type="hidden" id="fa-edit-id" value="">
+                            <div class="form-row">
+                                <div class="form-group" style="flex:2;">
+                                    <label>資産名称 <span class="required">*</span></label>
+                                    <div class="fa-name-row">
+                                        <input type="text" id="fa-name" placeholder="例: MacBook Pro 14インチ" required>
+                                        <button type="button" id="fa-ai-btn" class="btn btn-ghost btn-sm fa-ai-btn" title="AIが耐用年数を判定します">🤖 AI判定</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>取得日 <span class="required">*</span></label>
+                                    <input type="date" id="fa-date" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>耐用年数（年） <span class="required">*</span></label>
+                                    <input type="number" id="fa-life" min="1" max="60" placeholder="例: 4" required>
+                                    <span id="fa-ai-hint" class="fa-ai-hint"></span>
+                                </div>
+                                <div class="form-group">
+                                    <label>取得原価（税込） <span class="required">*</span></label>
+                                    <input type="number" id="fa-cost" min="1" placeholder="例: 300000" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>償却方法</label>
+                                    <select id="fa-method">
+                                        <option value="定額法" selected>定額法</option>
+                                        <option value="定率法">定率法</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group" style="flex:2;">
+                                    <label>備考</label>
+                                    <input type="text" id="fa-notes" placeholder="任意のメモ">
+                                </div>
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">登録</button>
+                                <button type="button" id="fa-cancel-btn" class="btn btn-ghost" style="display:none;">キャンセル</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Tab: 一覧 -->
+                    <div id="fa-list" class="fa-tab-content">
+                        <h3 class="card-subtitle" style="margin-top:1rem;">固定資産一覧</h3>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>資産名称</th>
+                                        <th>取得日</th>
+                                        <th class="text-right">取得原価</th>
+                                        <th>耐用年数</th>
+                                        <th>償却方法</th>
+                                        <th>備考</th>
+                                        <th style="width:60px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fa-list-tbody"></tbody>
+                            </table>
+                        </div>
+                        <p id="fa-list-empty" class="text-muted" style="display:none;">固定資産がまだ登録されていません。</p>
+                    </div>
+
+                    <!-- Tab: 減価償却明細書 -->
+                    <div id="fa-depreciation" class="fa-tab-content">
+                        <div class="fa-depr-header">
+                            <h3 class="card-subtitle">減価償却費の計算明細書</h3>
+                            <div class="fa-depr-fy">
+                                <label>年度:</label>
+                                <input type="number" id="fa-depr-year" value="2025" min="2000" max="2099" style="width:80px;">
+                                <button type="button" id="fa-depr-calc-btn" class="btn btn-primary btn-sm">計算</button>
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>資産名称</th>
+                                        <th>取得日</th>
+                                        <th class="text-right">取得原価</th>
+                                        <th>耐用年数</th>
+                                        <th>償却方法</th>
+                                        <th>償却率</th>
+                                        <th class="text-right">期首帳簿価額</th>
+                                        <th class="text-right">本年分償却費</th>
+                                        <th class="text-right">期末帳簿価額</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fa-depr-tbody"></tbody>
+                                <tfoot id="fa-depr-tfoot"></tfoot>
+                            </table>
+                        </div>
+                        <p id="fa-depr-empty" class="text-muted" style="display:none;">固定資産がありません。先に「登録」タブから資産を登録してください。</p>
+                    </div>
+
+                    <!-- Tab: アウトプット -->
+                    <div id="fa-output" class="fa-tab-content">
+                        <h3 class="card-subtitle" style="margin-top:1rem;">アウトプット</h3>
+                        <div class="output-options">
+                            <div class="output-section">
+                                <h3>固定資産一覧</h3>
+                                <div class="output-btns">
+                                    <button id="fa-out-list-csv" class="btn btn-primary btn-sm">CSV</button>
+                                </div>
+                            </div>
+                            <div class="output-section">
+                                <h3>減価償却費の計算明細書</h3>
+                                <div class="output-btns">
+                                    <button id="fa-out-depr-csv" class="btn btn-primary btn-sm">CSV</button>
+                                    <button id="fa-out-depr-pdf" class="btn btn-ghost btn-sm">PDF / 印刷</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-row" style="margin-top:1rem;">
+                            <div class="form-group" style="max-width:120px;">
+                                <label>年度</label>
+                                <input type="number" id="fa-out-year" value="2025" min="2000" max="2099">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- View 9: アウトプット -->
             <section id="view-output" class="content-view">
                 <div class="card">
@@ -697,7 +843,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=42"></script>
+    <script src="script.js?v=43"></script>
 </body>
 
 </html>
