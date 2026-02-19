@@ -577,6 +577,103 @@ def api_trial_balance():
 
 
 # ============================
+#  Statement Import API (user-scoped)
+# ============================
+@app.route('/api/statement/parse', methods=['POST'])
+def api_statement_parse():
+    """Smart CSV parsing: auto-detect bank/card format, structured parse, AI fallback."""
+    uid = get_user_id()
+    if 'file' not in request.files:
+        return jsonify({"error": "ファイルが選択されていません"}), 400
+
+    file = request.files['file']
+    file_bytes = file.read()
+    filename = file.filename or ''
+
+    try:
+        from statement_parser import parse_csv_smart, compute_file_hash
+
+        result = parse_csv_smart(file_bytes)
+
+        # Check for duplicate import
+        file_hash = result['file_hash']
+        prev = models.get_import_by_hash(file_hash, user_id=uid)
+        if prev:
+            result['duplicate_warning'] = f"このファイルは {prev['created_at'][:10]} に既にインポート済みです（{prev['imported_count']}件）"
+
+        # Apply saved source mapping if available
+        if result['detected'] and result['source_name']:
+            saved = models.get_statement_source(result['source_name'], user_id=uid)
+            if saved:
+                result['saved_debit'] = saved['default_debit']
+                result['saved_credit'] = saved['default_credit']
+                # Re-apply saved mapping to entries
+                for entry in result['entries']:
+                    if saved['default_debit'] and not entry.get('debit_account'):
+                        pass  # Leave blank for AI to fill
+                    if saved['default_credit'] and entry.get('credit_account') in ('未払金', '普通預金', ''):
+                        if result['source_type'] == 'card':
+                            entry['credit_account'] = saved['default_credit']
+
+        # Duplicate detection against existing journal entries
+        existing = models.get_existing_entry_keys(user_id=uid)
+        for entry in result['entries']:
+            key = f"{entry.get('date')}_{entry.get('amount')}_{entry.get('counterparty')}"
+            entry['is_duplicate'] = key in existing
+
+        result['filename'] = filename
+        print(f"[Statement Parse] {filename}: detected={result['detected']}, "
+              f"source={result['source_name']}, rows={result['total_rows']}", flush=True)
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"[Statement Parse] Error: {e}", flush=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/statement/history', methods=['GET'])
+def api_statement_history_get():
+    """Get import history."""
+    uid = get_user_id()
+    history = models.get_import_history(user_id=uid)
+    return jsonify({"history": history})
+
+
+@app.route('/api/statement/history', methods=['POST'])
+def api_statement_history_create():
+    """Record a completed import."""
+    uid = get_user_id()
+    data = request.json or {}
+    import_id = models.create_import_record(
+        user_id=uid,
+        filename=data.get('filename', ''),
+        file_hash=data.get('file_hash', ''),
+        source_name=data.get('source_name', ''),
+        row_count=data.get('row_count', 0),
+        imported_count=data.get('imported_count', 0),
+        date_range_start=data.get('date_range_start', ''),
+        date_range_end=data.get('date_range_end', ''),
+    )
+    return jsonify({"status": "success", "id": import_id})
+
+
+@app.route('/api/statement/sources', methods=['POST'])
+def api_statement_sources_save():
+    """Save statement source mapping."""
+    uid = get_user_id()
+    data = request.json or {}
+    if not data.get('source_name'):
+        return jsonify({"error": "source_name is required"}), 400
+    models.upsert_statement_source(
+        user_id=uid,
+        source_name=data['source_name'],
+        default_debit=data.get('default_debit', ''),
+        default_credit=data.get('default_credit', ''),
+    )
+    return jsonify({"status": "success"})
+
+
+# ============================
 #  AI Analysis API (user-scoped)
 # ============================
 @app.route('/api/analyze', methods=['POST'])

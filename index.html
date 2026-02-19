@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hinakira会計</title>
-    <link rel="stylesheet" href="style.css?v=37">
+    <link rel="stylesheet" href="style.css?v=38">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -200,6 +200,18 @@
                 <div id="scan-status" class="status-area hidden">
                     <div class="spinner"></div>
                     <p id="scan-status-text">AIが解析中...</p>
+                </div>
+                <div id="import-source-banner" class="import-source-banner hidden">
+                    <div class="import-source-info">
+                        <span class="import-source-badge">CSV明細</span>
+                        <strong id="import-source-name">---</strong>の明細を読み取りました。口座の初期設定を確認してください。
+                    </div>
+                    <div class="import-source-fields">
+                        <label>借方: <input type="text" id="import-source-debit" list="account-list" class="import-source-input" placeholder="普通預金"></label>
+                        <label>貸方: <input type="text" id="import-source-credit" list="account-list" class="import-source-input" placeholder="未払金"></label>
+                        <label class="import-source-save-label"><input type="checkbox" id="import-source-save" checked> 保存</label>
+                        <button id="import-source-apply" class="btn btn-sm btn-primary">適用</button>
+                    </div>
                 </div>
                 <div id="scan-results" class="card hidden">
                     <h3 class="card-subtitle">解析結果の確認</h3>

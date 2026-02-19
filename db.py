@@ -134,6 +134,32 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value       TEXT NOT NULL,
     PRIMARY KEY (user_id, key)
 );
+
+CREATE TABLE IF NOT EXISTS import_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL DEFAULT 0,
+    filename        TEXT NOT NULL,
+    file_hash       TEXT NOT NULL,
+    source_name     TEXT NOT NULL DEFAULT '',
+    row_count       INTEGER DEFAULT 0,
+    imported_count  INTEGER DEFAULT 0,
+    date_range_start TEXT DEFAULT '',
+    date_range_end   TEXT DEFAULT '',
+    created_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_import_history_user ON import_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_import_history_hash ON import_history(file_hash);
+
+CREATE TABLE IF NOT EXISTS statement_sources (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL DEFAULT 0,
+    source_name     TEXT NOT NULL,
+    default_debit   TEXT DEFAULT '',
+    default_credit  TEXT DEFAULT '',
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_statement_sources_unique ON statement_sources(user_id, source_name);
 """
 
 
@@ -211,6 +237,46 @@ def migrate_db():
                 SELECT 0, key, value FROM settings
                 """)
             print("Migration: Created user_settings table.")
+
+        # Create import_history if missing
+        has_import_history = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='import_history'"
+        ).fetchone()
+        if not has_import_history:
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS import_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL DEFAULT 0,
+                filename TEXT NOT NULL,
+                file_hash TEXT NOT NULL,
+                source_name TEXT NOT NULL DEFAULT '',
+                row_count INTEGER DEFAULT 0,
+                imported_count INTEGER DEFAULT 0,
+                date_range_start TEXT DEFAULT '',
+                date_range_end TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now'))
+            )""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_import_history_user ON import_history(user_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_import_history_hash ON import_history(file_hash)")
+            print("Migration: Created import_history table.")
+
+        # Create statement_sources if missing
+        has_statement_sources = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='statement_sources'"
+        ).fetchone()
+        if not has_statement_sources:
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS statement_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL DEFAULT 0,
+                source_name TEXT NOT NULL,
+                default_debit TEXT DEFAULT '',
+                default_credit TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            )""")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_statement_sources_unique ON statement_sources(user_id, source_name)")
+            print("Migration: Created statement_sources table.")
 
         conn.commit()
         print("Migration completed successfully.")

@@ -855,3 +855,97 @@ def _resolve_account_id(conn, account_id=None, account_name=None) -> int:
         ).fetchone()
         return row['id'] if row else None
     return None
+
+
+# ============================================================
+#  Import History & Statement Sources
+# ============================================================
+
+def get_import_by_hash(file_hash: str, user_id: int = 0):
+    """Check if a file with this hash has already been imported."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM import_history WHERE file_hash = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1",
+            (file_hash, user_id)
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def create_import_record(user_id: int, filename: str, file_hash: str,
+                          source_name: str, row_count: int, imported_count: int,
+                          date_range_start: str = '', date_range_end: str = '') -> int:
+    """Record a completed import."""
+    conn = get_db()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO import_history
+            (user_id, filename, file_hash, source_name, row_count, imported_count,
+             date_range_start, date_range_end)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, filename, file_hash, source_name, row_count,
+             imported_count, date_range_start, date_range_end)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print(f"Import record error: {e}")
+        conn.rollback()
+        return 0
+    finally:
+        conn.close()
+
+
+def get_import_history(user_id: int = 0, limit: int = 20) -> list:
+    """Get recent import history."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM import_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_statement_source(source_name: str, user_id: int = 0):
+    """Get saved source mapping for a specific source."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM statement_sources WHERE source_name = ? AND user_id = ?",
+            (source_name, user_id)
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def upsert_statement_source(user_id: int, source_name: str,
+                             default_debit: str = '', default_credit: str = ''):
+    """Save or update statement source mapping."""
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO statement_sources (user_id, source_name, default_debit, default_credit)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, source_name)
+            DO UPDATE SET default_debit = ?, default_credit = ?, updated_at = datetime('now')""",
+            (user_id, source_name, default_debit, default_credit,
+             default_debit, default_credit)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"Statement source upsert error: {e}")
+        conn.rollback()
+    finally:
+        conn.close()

@@ -635,7 +635,136 @@ document.addEventListener('DOMContentLoaded', () => {
     scanAddFile.addEventListener('click', () => scanAddInput.click());
     scanAddInput.addEventListener('change', () => { handleScanFiles(scanAddInput.files, true); scanAddInput.value = ''; });
 
+    // Statement import: track last parsed result for recording history
+    let lastStatementParse = null;
+
     async function handleScanFiles(files, append = false) {
+        if (!files.length) return;
+
+        // Separate CSV files from image/PDF files
+        const csvFiles = [];
+        const otherFiles = [];
+        for (const f of files) {
+            if (f.name.toLowerCase().endsWith('.csv')) {
+                csvFiles.push(f);
+            } else {
+                otherFiles.push(f);
+            }
+        }
+
+        // Process CSV files through smart statement parser
+        if (csvFiles.length > 0) {
+            await handleCsvStatementFiles(csvFiles, append);
+            // If there are also non-CSV files, process those with AI (appending)
+            if (otherFiles.length > 0) {
+                await handleAiScanFiles(otherFiles, true);
+            }
+        } else {
+            // All non-CSV: use existing AI analysis
+            await handleAiScanFiles(otherFiles, append);
+        }
+    }
+
+    async function handleCsvStatementFiles(csvFiles, append = false) {
+        scanStatus.classList.remove('hidden');
+        scanStatusText.textContent = `${csvFiles.length}件のCSV明細を解析中...`;
+
+        try {
+            let allEntries = [];
+            for (const csvFile of csvFiles) {
+                const formData = new FormData();
+                formData.append('file', csvFile);
+
+                const result = await fetchAPI('/api/statement/parse', 'POST', formData);
+                if (result.error) throw new Error(result.error);
+
+                if (result.detected) {
+                    // Smart parse succeeded — show source banner if first time
+                    lastStatementParse = result;
+                    showSourceBanner(result);
+                    allEntries.push(...result.entries);
+
+                    // Show duplicate file warning
+                    if (result.duplicate_warning) {
+                        showToast(`⚠️ ${result.duplicate_warning}`, true);
+                    }
+
+                    // AI prediction for entries missing debit/credit accounts
+                    const needsPrediction = result.entries.filter(
+                        e => !e.debit_account || !e.credit_account
+                    );
+                    if (needsPrediction.length > 0) {
+                        const apiKey = localStorage.getItem('gemini_api_key');
+                        if (apiKey) {
+                            scanStatusText.textContent = `AI科目判定中... (${needsPrediction.length}件)`;
+                            try {
+                                const predictData = needsPrediction.map(e => ({
+                                    description: e.counterparty || e.memo || '',
+                                    amount: e.amount,
+                                    date: e.date,
+                                    current_debit: e.debit_account || '',
+                                    current_credit: e.credit_account || '',
+                                }));
+                                const predictions = await fetchAPI('/api/predict', 'POST', {
+                                    data: predictData,
+                                    gemini_api_key: apiKey,
+                                });
+                                // Apply predictions to entries
+                                if (Array.isArray(predictions)) {
+                                    let pi = 0;
+                                    for (const entry of result.entries) {
+                                        if (!entry.debit_account || !entry.credit_account) {
+                                            if (pi < predictions.length) {
+                                                const pred = predictions[pi];
+                                                if (!entry.debit_account && pred.debit_account) {
+                                                    entry.debit_account = pred.debit_account;
+                                                }
+                                                if (!entry.credit_account && pred.credit_account) {
+                                                    entry.credit_account = pred.credit_account;
+                                                }
+                                                if (pred.tax_classification) {
+                                                    entry.tax_classification = pred.tax_classification;
+                                                }
+                                                pi++;
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (predErr) {
+                                console.warn('AI prediction failed, entries will need manual input:', predErr);
+                            }
+                        }
+                    }
+
+                    showToast(`${result.source_name}の明細を${result.total_rows}件読み取りました`);
+                } else {
+                    // Format not detected — fall back to AI analysis
+                    const apiKey = localStorage.getItem('gemini_api_key');
+                    if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
+                    scanStatusText.textContent = `CSV形式を判定できません。AIで解析中...`;
+                    const formData2 = new FormData();
+                    formData2.append('files', csvFile);
+                    formData2.append('gemini_api_key', apiKey);
+                    if (accessToken) formData2.append('access_token', accessToken);
+                    const data = await fetchAPI('/api/analyze', 'POST', formData2);
+                    if (data.error) throw new Error(data.error);
+                    allEntries.push(...data);
+                }
+            }
+
+            if (allEntries.length > 0) {
+                scanResults = append ? [...scanResults, ...allEntries] : allEntries;
+                renderScanResults();
+                scanResultsCard.classList.remove('hidden');
+            }
+            scanStatus.classList.add('hidden');
+        } catch (err) {
+            scanStatus.classList.add('hidden');
+            showToast('CSV解析エラー: ' + err.message, true);
+        }
+    }
+
+    async function handleAiScanFiles(files, append = false) {
         if (!files.length) return;
         const apiKey = localStorage.getItem('gemini_api_key');
         if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
@@ -658,6 +787,66 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             scanStatus.classList.add('hidden');
             showToast('解析エラー: ' + err.message, true);
+        }
+    }
+
+    function showSourceBanner(result) {
+        const banner = document.getElementById('import-source-banner');
+        if (!banner) return;
+
+        // Show banner only for detected formats without saved mapping
+        if (!result.detected || (result.saved_debit || result.saved_credit)) {
+            banner.classList.add('hidden');
+            return;
+        }
+
+        const nameEl = document.getElementById('import-source-name');
+        const debitEl = document.getElementById('import-source-debit');
+        const creditEl = document.getElementById('import-source-credit');
+        if (nameEl) nameEl.textContent = result.source_name;
+        if (debitEl) debitEl.value = result.default_debit || '';
+        if (creditEl) creditEl.value = result.default_credit || '';
+
+        banner.classList.remove('hidden');
+
+        // Apply button handler
+        const applyBtn = document.getElementById('import-source-apply');
+        if (applyBtn) {
+            applyBtn.onclick = async () => {
+                const debit = debitEl ? debitEl.value.trim() : '';
+                const credit = creditEl ? creditEl.value.trim() : '';
+                const saveCheck = document.getElementById('import-source-save');
+                const shouldSave = saveCheck ? saveCheck.checked : true;
+
+                // Update current entries
+                for (const entry of scanResults) {
+                    if (entry.source === 'csv_import') {
+                        if (result.source_type === 'card' && credit) {
+                            entry.credit_account = credit;
+                        } else if (result.source_type === 'bank') {
+                            // For bank: debit field is the bank account name
+                            // Deposits: debit=bank account, Withdrawals: credit=bank account
+                            // This is already handled by the parser
+                        }
+                    }
+                }
+                renderScanResults();
+
+                // Save mapping if checkbox checked
+                if (shouldSave && result.source_name) {
+                    try {
+                        await fetchAPI('/api/statement/sources', 'POST', {
+                            source_name: result.source_name,
+                            default_debit: debit,
+                            default_credit: credit,
+                        });
+                        showToast(`${result.source_name}の設定を保存しました`);
+                    } catch (e) {
+                        console.warn('Failed to save source mapping:', e);
+                    }
+                }
+                banner.classList.add('hidden');
+            };
         }
     }
 
@@ -727,6 +916,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const valid = scanResults.filter(r => parseInt(r.amount) > 0);
         if (!valid.length) { showToast('保存するデータがありません', true); return; }
 
+        // Determine source: csv_import for statement-parsed entries, ai_receipt for others
+        const hasCsvEntries = valid.some(r => r.source === 'csv_import');
         const entries = valid.map(r => ({
             entry_date: r.date,
             debit_account: r.debit_account,
@@ -736,7 +927,7 @@ document.addEventListener('DOMContentLoaded', () => {
             counterparty: r.counterparty || '',
             memo: r.memo || '',
             evidence_url: r.evidence_url || '',
-            source: 'ai_receipt',
+            source: r.source || 'ai_receipt',
         }));
 
         try {
@@ -745,6 +936,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetchAPI('/api/journal', 'POST', { entries });
             if (res.status === 'success') {
                 showToast(`${res.created}件の仕訳を登録しました`);
+                // Record import history for CSV statement imports
+                if (hasCsvEntries && lastStatementParse) {
+                    const dates = valid.filter(r => r.source === 'csv_import' && r.date).map(r => r.date).sort();
+                    fetchAPI('/api/statement/history', 'POST', {
+                        filename: lastStatementParse.filename || '',
+                        file_hash: lastStatementParse.file_hash || '',
+                        source_name: lastStatementParse.source_name || '',
+                        row_count: lastStatementParse.total_rows || 0,
+                        imported_count: valid.filter(r => r.source === 'csv_import').length,
+                        date_range_start: dates[0] || '',
+                        date_range_end: dates[dates.length - 1] || '',
+                    }).catch(() => {});
+                    lastStatementParse = null;
+                }
+                // Hide source banner
+                const banner = document.getElementById('import-source-banner');
+                if (banner) banner.classList.add('hidden');
                 // Move inbox files to processed (if any)
                 if (driveFileIdsInScan.length && accessToken) {
                     fetchAPI('/api/drive/inbox/move', 'POST', {
