@@ -3446,7 +3446,7 @@ document.addEventListener('DOMContentLoaded', () => {
         faCost.value = '';
         faMethod.value = '定額法';
         faNotes.value = '';
-        faAiHint.textContent = '';
+        if (faAiHint) faAiHint.textContent = '💡 資産名称を入力して「AI判定」を押すと、耐用年数を自動で判定します。';
         faCancelBtn.style.display = 'none';
     }
 
@@ -3463,22 +3463,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             faAiBtn.disabled = true;
-            faAiBtn.textContent = '🤖 判定中...';
-            faAiHint.textContent = '';
+            faAiBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> 判定中...';
+            if (faAiHint) faAiHint.textContent = '🔄 AIが耐用年数を判定中...';
             try {
                 const res = await fetchAPI('/api/fixed-assets/ai-useful-life', 'POST', { asset_name: name });
                 if (res.useful_life) {
                     faLife.value = res.useful_life;
-                    faAiHint.textContent = `AI判定: ${res.asset_category || ''} ${res.useful_life}年（${res.reasoning || ''})`;
-                    faAiHint.classList.add('fa-ai-hint-show');
+                    const detail = res.detail_category ? ` / ${res.detail_category}` : '';
+                    if (faAiHint) {
+                        faAiHint.textContent = `✅ AI判定: ${res.asset_category || ''}${detail} → ${res.useful_life}年（${res.reasoning || ''})`;
+                    }
                 } else {
                     showToast('AI判定できませんでした', true);
+                    if (faAiHint) faAiHint.textContent = '❌ AI判定できませんでした。手動で入力してください。';
                 }
             } catch (err) {
                 showToast('AI判定エラー', true);
+                if (faAiHint) faAiHint.textContent = '❌ AI判定エラー。手動で入力してください。';
             } finally {
                 faAiBtn.disabled = false;
-                faAiBtn.textContent = '🤖 AI判定';
+                faAiBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> AI判定';
             }
         });
     }

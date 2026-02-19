@@ -1962,38 +1962,138 @@ tr.pl-subtotal td { border-top: 1px solid #c7d2fe; color: #1e3a8a; }
     display: block;
 }
 
-/* Registration form: asset name row with AI button */
-.fa-name-row {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
-.fa-name-row input {
-    flex: 1;
-}
-.fa-ai-btn {
-    white-space: nowrap;
-    font-size: 0.8125rem;
-    padding: 0.5rem 0.75rem;
-}
-.fa-ai-btn:hover {
-    background: var(--primary-light);
-    border-color: var(--primary);
-    color: var(--primary);
+/* Registration card — same pattern as je-card */
+.fa-card {
+    padding: 0;
+    overflow: hidden;
+    border: 2px solid #2563eb;
+    border-radius: var(--radius);
+    box-shadow: 0 4px 24px rgba(37,99,235,0.15), 0 1px 4px rgba(0,0,0,0.06);
+    margin-top: 1rem;
+    margin-bottom: 1.5rem;
+    background: var(--bg-white);
 }
 
-/* AI hint text below useful life input */
-.fa-ai-hint {
+/* Header — gradient blue like je-header */
+.fa-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+    padding: 1rem 1.25rem;
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    color: #fff;
+}
+.fa-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    margin: 0;
+}
+.fa-ai-hint-text {
+    flex: 1 1 auto;
+    margin: 0;
+    font-size: 0.6875rem;
+    color: rgba(255,255,255,0.85);
+    line-height: 1.5;
+    min-width: 200px;
+}
+
+/* Table wrapper */
+.fa-table-wrap {
+    overflow-x: auto;
+}
+
+/* Input table — same as je-input-table */
+.fa-input-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+.fa-input-table .fa-th {
+    text-align: left;
+    padding: 0.625rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #374151;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    border-right: 1px solid #f1f5f9;
+    white-space: nowrap;
+}
+.fa-input-table .fa-th:last-child { border-right: none; }
+
+/* Input row — grid lines */
+.fa-input-row td {
+    padding: 0.625rem 0.375rem;
+    border-bottom: 1px solid #e2e8f0;
+    border-right: 1px solid #f1f5f9;
+    vertical-align: middle;
+    background: #fff;
+}
+.fa-input-row td:last-child { border-right: none; }
+
+.fa-input-row input,
+.fa-input-row select {
+    width: 100%;
+    padding: 0.625rem 0.5rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.8125rem;
+    color: var(--text);
+    background: #fff;
+    transition: all 0.12s;
+}
+.fa-input-row input:hover,
+.fa-input-row select:hover {
+    border-color: #94a3b8;
+}
+.fa-input-row input:focus,
+.fa-input-row select:focus {
+    outline: none;
+    border-color: #6366f1;
+    background: #faf5ff;
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+}
+.fa-input-row input[type="number"] {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Submit button in table */
+.btn-fa-submit {
     display: block;
+    width: 100%;
+    padding: 0.625rem 0.625rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-family: inherit;
     font-size: 0.75rem;
-    color: var(--text-secondary);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+}
+.btn-fa-submit:hover { background: #1d4ed8; }
+
+/* Cancel button */
+.btn-fa-cancel {
+    display: block;
+    width: 100%;
     margin-top: 0.25rem;
-    min-height: 1rem;
-    transition: color 0.2s;
+    padding: 0.25rem;
+    background: none;
+    color: #94a3b8;
+    border: none;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.15s;
 }
-.fa-ai-hint-show {
-    color: var(--primary);
-}
+.btn-fa-cancel:hover { color: #dc2626; }
 
 /* Depreciation header with year selector */
 .fa-depr-header {
