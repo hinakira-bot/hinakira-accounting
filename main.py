@@ -13,6 +13,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 
 import db
+from db import P, USE_PG
 import models
 
 load_dotenv()
@@ -898,7 +899,7 @@ def api_settings_get():
     uid = get_user_id()
     conn = db.get_db()
     try:
-        rows = conn.execute("SELECT key, value FROM user_settings WHERE user_id = ?", (uid,)).fetchall()
+        rows = conn.execute(P("SELECT key, value FROM user_settings WHERE user_id = ?"), (uid,)).fetchall()
         return jsonify({r['key']: r['value'] for r in rows})
     finally:
         conn.close()
@@ -915,10 +916,17 @@ def api_settings_update():
     conn = db.get_db()
     try:
         for key, value in data.items():
-            conn.execute(
-                "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
-                (uid, key, str(value))
-            )
+            if USE_PG:
+                conn.execute(
+                    "INSERT INTO user_settings (user_id, key, value) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
+                    (uid, key, str(value))
+                )
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                    (uid, key, str(value))
+                )
         conn.commit()
         return jsonify({"status": "success"})
     except Exception as e:

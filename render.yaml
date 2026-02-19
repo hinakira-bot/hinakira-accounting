@@ -3,11 +3,15 @@ services:
     name: hinakira-accounting
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT --timeout 120 --workers 1
+    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT --timeout 120 --workers 3
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.6"
-    disk:
-      name: data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hinakira-db
+          property: connectionString
+
+databases:
+  - name: hinakira-db
+    plan: starter

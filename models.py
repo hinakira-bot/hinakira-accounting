@@ -4,7 +4,10 @@ CRUD operations for journal entries, accounts, trial balance, etc.
 All user-scoped functions require user_id parameter.
 """
 import math
-from db import get_db
+from db import get_db, P, USE_PG
+
+# --- DB dialect helpers ---
+_NOW = "CURRENT_TIMESTAMP" if USE_PG else "datetime('now')"
 
 # --- Tax Calculation ---
 TAX_RATES = {
@@ -28,10 +31,10 @@ def get_or_create_user(email: str, name: str = '', picture: str = '') -> dict:
     """Find user by email or create new one. Returns user dict with id."""
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, email, name, picture FROM users WHERE email = ?", (email,)).fetchone()
+        row = conn.execute(P("SELECT id, email, name, picture FROM users WHERE email = ?"), (email,)).fetchone()
         if row:
             # Update last_login
-            conn.execute("UPDATE users SET last_login = datetime('now'), name = ?, picture = ? WHERE id = ?",
+            conn.execute(P(f"UPDATE users SET last_login = {_NOW}, name = ?, picture = ? WHERE id = ?"),
                          (name or row['name'], picture or row['picture'], row['id']))
             conn.commit()
             user = dict(row)
@@ -39,12 +42,16 @@ def get_or_create_user(email: str, name: str = '', picture: str = '') -> dict:
             _migrate_legacy_data(conn, user['id'])
             return user
         else:
-            cursor = conn.execute(
-                "INSERT INTO users (email, name, picture) VALUES (?, ?, ?)",
-                (email, name, picture)
-            )
+            if USE_PG:
+                cur = conn.cursor()
+                cur.execute(P("INSERT INTO users (email, name, picture) VALUES (?, ?, ?) RETURNING id"),
+                            (email, name, picture))
+                new_id = cur.fetchone()['id']
+            else:
+                cur = conn.execute("INSERT INTO users (email, name, picture) VALUES (?, ?, ?)",
+                                   (email, name, picture))
+                new_id = cur.lastrowid
             conn.commit()
-            new_id = cursor.lastrowid
             user = {'id': new_id, 'email': email, 'name': name, 'picture': picture}
             # Migrate legacy data to first registered user
             _migrate_legacy_data(conn, new_id)
@@ -56,19 +63,21 @@ def get_or_create_user(email: str, name: str = '', picture: str = '') -> dict:
 def _migrate_legacy_data(conn, user_id: int):
     """Migrate user_id=0 data to the given user (first-come gets legacy data)."""
     # Check if there's any legacy data
-    legacy_count = conn.execute("SELECT COUNT(*) FROM journal_entries WHERE user_id = 0").fetchone()[0]
+    row = conn.execute("SELECT COUNT(*) AS cnt FROM journal_entries WHERE user_id = 0").fetchone()
+    legacy_count = row['cnt'] if USE_PG else row[0]
     if legacy_count == 0:
         return
 
     # Only migrate if no other user has claimed this data yet
-    any_claimed = conn.execute("SELECT COUNT(*) FROM journal_entries WHERE user_id != 0").fetchone()[0]
+    row2 = conn.execute("SELECT COUNT(*) AS cnt FROM journal_entries WHERE user_id != 0").fetchone()
+    any_claimed = row2['cnt'] if USE_PG else row2[0]
     if any_claimed > 0:
         return  # Another user already has data, don't re-migrate
 
-    conn.execute("UPDATE journal_entries SET user_id = ? WHERE user_id = 0", (user_id,))
-    conn.execute("UPDATE opening_balances SET user_id = ? WHERE user_id = 0", (user_id,))
-    conn.execute("UPDATE counterparties SET user_id = ? WHERE user_id = 0", (user_id,))
-    conn.execute("UPDATE user_settings SET user_id = ? WHERE user_id = 0", (user_id,))
+    conn.execute(P("UPDATE journal_entries SET user_id = ? WHERE user_id = 0"), (user_id,))
+    conn.execute(P("UPDATE opening_balances SET user_id = ? WHERE user_id = 0"), (user_id,))
+    conn.execute(P("UPDATE counterparties SET user_id = ? WHERE user_id = 0"), (user_id,))
+    conn.execute(P("UPDATE user_settings SET user_id = ? WHERE user_id = 0"), (user_id,))
     conn.commit()
     print(f"Migrated legacy data to user {user_id}")
 
@@ -94,12 +103,12 @@ def create_account(code: str, name: str, account_type: str, tax_default: str = '
     try:
         display_order = int(code) if code.isdigit() else 0
         conn.execute(
-            "INSERT INTO accounts_master (code, name, account_type, tax_default, display_order) VALUES (?, ?, ?, ?, ?)",
+            P("INSERT INTO accounts_master (code, name, account_type, tax_default, display_order) VALUES (?, ?, ?, ?, ?)"),
             (code, name, account_type, tax_default, display_order)
         )
         conn.commit()
         row = conn.execute(
-            "SELECT id, code, name, account_type, tax_default, display_order FROM accounts_master WHERE code = ?",
+            P("SELECT id, code, name, account_type, tax_default, display_order FROM accounts_master WHERE code = ?"),
             (code,)
         ).fetchone()
         return dict(row) if row else {}
@@ -111,14 +120,15 @@ def delete_account(account_id: int) -> bool:
     """Soft-delete an account (set is_active = 0). Prevents deletion if used in journal entries."""
     conn = get_db()
     try:
-        used = conn.execute(
-            "SELECT COUNT(*) FROM journal_entries WHERE (debit_account_id = ? OR credit_account_id = ?) AND is_deleted = 0",
+        row = conn.execute(
+            P("SELECT COUNT(*) AS cnt FROM journal_entries WHERE (debit_account_id = ? OR credit_account_id = ?) AND is_deleted = 0"),
             (account_id, account_id)
-        ).fetchone()[0]
+        ).fetchone()
+        used = row['cnt'] if USE_PG else row[0]
         if used > 0:
             return False
         conn.execute(
-            "UPDATE accounts_master SET is_active = 0, updated_at = datetime('now') WHERE id = ?",
+            P(f"UPDATE accounts_master SET is_active = 0, updated_at = {_NOW} WHERE id = ?"),
             (account_id,)
         )
         conn.commit()
@@ -132,7 +142,7 @@ def get_account_by_name(name: str):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id, code, name, account_type, tax_default FROM accounts_master WHERE name = ? AND is_active = 1",
+            P("SELECT id, code, name, account_type, tax_default FROM accounts_master WHERE name = ? AND is_active = 1"),
             (name,)
         ).fetchone()
         return dict(row) if row else None
@@ -145,7 +155,7 @@ def get_account_by_id(account_id: int):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id, code, name, account_type, tax_default FROM accounts_master WHERE id = ?",
+            P("SELECT id, code, name, account_type, tax_default FROM accounts_master WHERE id = ?"),
             (account_id,)
         ).fetchone()
         return dict(row) if row else None
@@ -182,12 +192,7 @@ def create_journal_entry(entry: dict, user_id: int = 0) -> int:
             except (ValueError, TypeError):
                 pass
 
-        cursor = conn.execute(
-            """INSERT INTO journal_entries
-            (user_id, entry_date, debit_account_id, credit_account_id, amount, tax_classification, tax_amount,
-             counterparty, memo, evidence_url, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
+        _params = (
                 user_id,
                 entry_date,
                 debit_id,
@@ -199,10 +204,20 @@ def create_journal_entry(entry: dict, user_id: int = 0) -> int:
                 memo,
                 entry.get('evidence_url', ''),
                 entry.get('source', 'manual'),
-            )
         )
+        _sql = """INSERT INTO journal_entries
+            (user_id, entry_date, debit_account_id, credit_account_id, amount, tax_classification, tax_amount,
+             counterparty, memo, evidence_url, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        if USE_PG:
+            cur = conn.cursor()
+            cur.execute(P(_sql + " RETURNING id"), _params)
+            new_id = cur.fetchone()['id']
+        else:
+            cur = conn.execute(_sql, _params)
+            new_id = cur.lastrowid
         conn.commit()
-        return cursor.lastrowid
+        return new_id
     except Exception as e:
         conn.rollback()
         raise e
@@ -257,8 +272,9 @@ def get_journal_entries(filters: dict = None, user_id: int = 0) -> dict:
 
         where = " AND ".join(conditions)
 
-        count_sql = f"SELECT COUNT(*) FROM journal_entries je WHERE {where}"
-        total = conn.execute(count_sql, params).fetchone()[0]
+        count_sql = f"SELECT COUNT(*) AS cnt FROM journal_entries je WHERE {where}"
+        row = conn.execute(P(count_sql), params).fetchone()
+        total = row['cnt'] if USE_PG else row[0]
 
         page = max(1, int(filters.get('page', 1)))
         per_page = min(100, max(1, int(filters.get('per_page', 20))))
@@ -279,7 +295,7 @@ def get_journal_entries(filters: dict = None, user_id: int = 0) -> dict:
         LIMIT ? OFFSET ?
         """
         params.extend([per_page, offset])
-        rows = conn.execute(sql, params).fetchall()
+        rows = conn.execute(P(sql), params).fetchall()
 
         return {
             "entries": [dict(r) for r in rows],
@@ -295,7 +311,7 @@ def get_recent_entries(limit=5, user_id: int = 0) -> list:
     """Get the most recent journal entries (user-scoped)."""
     conn = get_db()
     try:
-        rows = conn.execute("""
+        rows = conn.execute(P("""
         SELECT
             je.id, je.entry_date, je.amount, je.tax_classification, je.tax_amount,
             je.counterparty, je.memo, je.evidence_url, je.source,
@@ -306,7 +322,7 @@ def get_recent_entries(limit=5, user_id: int = 0) -> list:
         WHERE je.is_deleted = 0 AND je.user_id = ?
         ORDER BY je.id DESC
         LIMIT ?
-        """, (user_id, limit)).fetchall()
+        """), (user_id, limit)).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -327,11 +343,11 @@ def update_journal_entry(entry_id: int, entry: dict, user_id: int = 0) -> bool:
             return False
 
         conn.execute(
-            """UPDATE journal_entries SET
+            P(f"""UPDATE journal_entries SET
                 entry_date = ?, debit_account_id = ?, credit_account_id = ?,
                 amount = ?, tax_classification = ?, tax_amount = ?,
-                counterparty = ?, memo = ?, updated_at = datetime('now')
-            WHERE id = ? AND is_deleted = 0 AND user_id = ?""",
+                counterparty = ?, memo = ?, updated_at = {_NOW}
+            WHERE id = ? AND is_deleted = 0 AND user_id = ?"""),
             (
                 entry.get('entry_date', entry.get('date', '')),
                 debit_id, credit_id, amount, tax_class, tax_amount,
@@ -354,7 +370,7 @@ def delete_journal_entry(entry_id: int, user_id: int = 0) -> bool:
     conn = get_db()
     try:
         conn.execute(
-            "UPDATE journal_entries SET is_deleted = 1, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
+            P(f"UPDATE journal_entries SET is_deleted = 1, updated_at = {_NOW} WHERE id = ? AND user_id = ?"),
             (entry_id, user_id)
         )
         conn.commit()
@@ -391,17 +407,17 @@ def get_trial_balance(start_date=None, end_date=None, user_id: int = 0) -> list:
         FROM journal_entries je WHERE {date_where}
         GROUP BY debit_account_id
         """
-        debit_totals = {row['account_id']: row['total'] for row in conn.execute(debit_sql, date_params).fetchall()}
+        debit_totals = {row['account_id']: row['total'] for row in conn.execute(P(debit_sql), date_params).fetchall()}
 
         credit_sql = f"""
         SELECT credit_account_id AS account_id, SUM(amount) AS total
         FROM journal_entries je WHERE {date_where}
         GROUP BY credit_account_id
         """
-        credit_totals = {row['account_id']: row['total'] for row in conn.execute(credit_sql, date_params).fetchall()}
+        credit_totals = {row['account_id']: row['total'] for row in conn.execute(P(credit_sql), date_params).fetchall()}
 
         fiscal_year = start_date[:4] if start_date else "2025"
-        opening_sql = "SELECT account_id, amount FROM opening_balances WHERE fiscal_year = ? AND user_id = ?"
+        opening_sql = P("SELECT account_id, amount FROM opening_balances WHERE fiscal_year = ? AND user_id = ?")
         openings = {row['account_id']: row['amount'] for row in conn.execute(opening_sql, (fiscal_year, user_id)).fetchall()}
 
         cf_debit = {}
@@ -415,10 +431,10 @@ def get_trial_balance(start_date=None, end_date=None, user_id: int = 0) -> list:
                 cf_params.append(fy_start)
 
             cf_debit_sql = f"SELECT debit_account_id AS account_id, SUM(amount) AS total FROM journal_entries je WHERE {cf_cond} GROUP BY debit_account_id"
-            cf_debit = {row['account_id']: row['total'] for row in conn.execute(cf_debit_sql, cf_params).fetchall()}
+            cf_debit = {row['account_id']: row['total'] for row in conn.execute(P(cf_debit_sql), cf_params).fetchall()}
 
             cf_credit_sql = f"SELECT credit_account_id AS account_id, SUM(amount) AS total FROM journal_entries je WHERE {cf_cond} GROUP BY credit_account_id"
-            cf_credit = {row['account_id']: row['total'] for row in conn.execute(cf_credit_sql, cf_params).fetchall()}
+            cf_credit = {row['account_id']: row['total'] for row in conn.execute(P(cf_credit_sql), cf_params).fetchall()}
 
         result = []
         for acc in accounts:
@@ -459,12 +475,12 @@ def get_counterparty_names(user_id: int = 0) -> list:
     """Get counterparty names for autocomplete (user-scoped)."""
     conn = get_db()
     try:
-        rows = conn.execute("""
+        rows = conn.execute(P("""
         SELECT name FROM counterparties WHERE is_active = 1 AND user_id = ?
         UNION
         SELECT DISTINCT counterparty AS name FROM journal_entries WHERE is_deleted = 0 AND counterparty != '' AND user_id = ?
         ORDER BY name
-        """, (user_id, user_id)).fetchall()
+        """), (user_id, user_id)).fetchall()
         return [r['name'] for r in rows]
     finally:
         conn.close()
@@ -475,7 +491,7 @@ def get_counterparties_list(user_id: int = 0) -> list:
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, name, code, contact_info, notes, is_active FROM counterparties WHERE is_active = 1 AND user_id = ? ORDER BY name",
+            P("SELECT id, name, code, contact_info, notes, is_active FROM counterparties WHERE is_active = 1 AND user_id = ? ORDER BY name"),
             (user_id,)
         ).fetchall()
         return [dict(r) for r in rows]
@@ -487,12 +503,17 @@ def create_counterparty(data: dict, user_id: int = 0) -> int:
     """Create a new counterparty (user-scoped)."""
     conn = get_db()
     try:
-        cursor = conn.execute(
-            "INSERT INTO counterparties (user_id, name, code, contact_info, notes) VALUES (?, ?, ?, ?, ?)",
-            (user_id, data.get('name', ''), data.get('code', ''), data.get('contact_info', ''), data.get('notes', ''))
-        )
+        _sql = "INSERT INTO counterparties (user_id, name, code, contact_info, notes) VALUES (?, ?, ?, ?, ?)"
+        _params = (user_id, data.get('name', ''), data.get('code', ''), data.get('contact_info', ''), data.get('notes', ''))
+        if USE_PG:
+            cur = conn.cursor()
+            cur.execute(P(_sql + " RETURNING id"), _params)
+            new_id = cur.fetchone()['id']
+        else:
+            cur = conn.execute(_sql, _params)
+            new_id = cur.lastrowid
         conn.commit()
-        return cursor.lastrowid
+        return new_id
     except Exception as e:
         conn.rollback()
         raise e
@@ -505,7 +526,7 @@ def update_counterparty(cp_id: int, data: dict, user_id: int = 0) -> bool:
     conn = get_db()
     try:
         conn.execute(
-            "UPDATE counterparties SET name=?, code=?, contact_info=?, notes=?, updated_at=datetime('now') WHERE id=? AND user_id=?",
+            P(f"UPDATE counterparties SET name=?, code=?, contact_info=?, notes=?, updated_at={_NOW} WHERE id=? AND user_id=?"),
             (data.get('name', ''), data.get('code', ''), data.get('contact_info', ''), data.get('notes', ''), cp_id, user_id)
         )
         conn.commit()
@@ -521,7 +542,7 @@ def delete_counterparty(cp_id: int, user_id: int = 0) -> bool:
     """Soft-delete a counterparty (user-scoped ownership check)."""
     conn = get_db()
     try:
-        conn.execute("UPDATE counterparties SET is_active=0, updated_at=datetime('now') WHERE id=? AND user_id=?", (cp_id, user_id))
+        conn.execute(P(f"UPDATE counterparties SET is_active=0, updated_at={_NOW} WHERE id=? AND user_id=?"), (cp_id, user_id))
         conn.commit()
         return True
     except Exception:
@@ -536,14 +557,14 @@ def get_opening_balances(fiscal_year: str, user_id: int = 0) -> list:
     """Get opening balances for a fiscal year (user-scoped)."""
     conn = get_db()
     try:
-        rows = conn.execute("""
+        rows = conn.execute(P("""
         SELECT am.id AS account_id, am.code, am.name, am.account_type,
                COALESCE(ob.amount, 0) AS amount, COALESCE(ob.note, '') AS note
         FROM accounts_master am
         LEFT JOIN opening_balances ob ON am.id = ob.account_id AND ob.fiscal_year = ? AND ob.user_id = ?
         WHERE am.is_active = 1
         ORDER BY am.display_order, am.code
-        """, (fiscal_year, user_id)).fetchall()
+        """), (fiscal_year, user_id)).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -556,17 +577,17 @@ def save_opening_balances(fiscal_year: str, balances: list, user_id: int = 0) ->
         for b in balances:
             # Check if exists
             existing = conn.execute(
-                "SELECT id FROM opening_balances WHERE user_id = ? AND fiscal_year = ? AND account_id = ?",
+                P("SELECT id FROM opening_balances WHERE user_id = ? AND fiscal_year = ? AND account_id = ?"),
                 (user_id, fiscal_year, b['account_id'])
             ).fetchone()
             if existing:
                 conn.execute(
-                    "UPDATE opening_balances SET amount = ?, note = ? WHERE id = ?",
+                    P("UPDATE opening_balances SET amount = ?, note = ? WHERE id = ?"),
                     (int(b.get('amount', 0)), b.get('note', ''), existing['id'])
                 )
             else:
                 conn.execute(
-                    "INSERT INTO opening_balances (user_id, fiscal_year, account_id, amount, note) VALUES (?, ?, ?, ?, ?)",
+                    P("INSERT INTO opening_balances (user_id, fiscal_year, account_id, amount, note) VALUES (?, ?, ?, ?, ?)"),
                     (user_id, fiscal_year, b['account_id'], int(b.get('amount', 0)), b.get('note', ''))
                 )
         conn.commit()
@@ -584,7 +605,7 @@ def get_ledger_entries(account_id: int, start_date=None, end_date=None, user_id:
     conn = get_db()
     try:
         account = conn.execute(
-            "SELECT id, code, name, account_type FROM accounts_master WHERE id = ?", (account_id,)
+            P("SELECT id, code, name, account_type FROM accounts_master WHERE id = ?"), (account_id,)
         ).fetchone()
         if not account:
             return {"error": "Account not found"}
@@ -601,7 +622,7 @@ def get_ledger_entries(account_id: int, start_date=None, end_date=None, user_id:
             params.append(end_date)
         where = " AND ".join(conditions)
 
-        rows = conn.execute(f"""
+        rows = conn.execute(P(f"""
         SELECT je.id, je.entry_date, je.amount, je.tax_classification,
                je.counterparty, je.memo,
                je.debit_account_id, je.credit_account_id,
@@ -611,11 +632,11 @@ def get_ledger_entries(account_id: int, start_date=None, end_date=None, user_id:
         JOIN accounts_master ca ON je.credit_account_id = ca.id
         WHERE {where}
         ORDER BY je.entry_date ASC, je.id ASC
-        """, params).fetchall()
+        """), params).fetchall()
 
         fiscal_year = start_date[:4] if start_date else str(__import__('datetime').date.today().year)
         ob_row = conn.execute(
-            "SELECT amount FROM opening_balances WHERE fiscal_year = ? AND account_id = ? AND user_id = ?",
+            P("SELECT amount FROM opening_balances WHERE fiscal_year = ? AND account_id = ? AND user_id = ?"),
             (fiscal_year, account_id, user_id)
         ).fetchone()
         opening = ob_row['amount'] if ob_row else 0
@@ -655,16 +676,16 @@ def get_full_backup(user_id: int = 0) -> dict:
         result['accounts_master'] = [dict(r) for r in rows]
 
         # User-scoped tables
-        rows = conn.execute("SELECT * FROM journal_entries WHERE user_id = ?", (user_id,)).fetchall()
+        rows = conn.execute(P("SELECT * FROM journal_entries WHERE user_id = ?"), (user_id,)).fetchall()
         result['journal_entries'] = [dict(r) for r in rows]
 
-        rows = conn.execute("SELECT * FROM opening_balances WHERE user_id = ?", (user_id,)).fetchall()
+        rows = conn.execute(P("SELECT * FROM opening_balances WHERE user_id = ?"), (user_id,)).fetchall()
         result['opening_balances'] = [dict(r) for r in rows]
 
-        rows = conn.execute("SELECT * FROM counterparties WHERE user_id = ?", (user_id,)).fetchall()
+        rows = conn.execute(P("SELECT * FROM counterparties WHERE user_id = ?"), (user_id,)).fetchall()
         result['counterparties'] = [dict(r) for r in rows]
 
-        rows = conn.execute("SELECT key, value FROM user_settings WHERE user_id = ?", (user_id,)).fetchall()
+        rows = conn.execute(P("SELECT key, value FROM user_settings WHERE user_id = ?"), (user_id,)).fetchall()
         result['settings'] = [{'key': r['key'], 'value': r['value']} for r in rows]
 
         return result
@@ -676,7 +697,8 @@ def restore_from_backup(data: dict, user_id: int = 0) -> dict:
     """Restore database from a JSON backup (user-scoped)."""
     conn = get_db()
     try:
-        conn.execute("PRAGMA foreign_keys=OFF")
+        if not USE_PG:
+            conn.execute("PRAGMA foreign_keys=OFF")
         summary = {}
 
         # Restore accounts_master (global)
@@ -690,17 +712,17 @@ def restore_from_backup(data: dict, user_id: int = 0) -> dict:
             for row in acct_rows:
                 try:
                     values = [row.get(col) for col in columns]
-                    conn.execute(f"INSERT INTO accounts_master ({col_names}) VALUES ({placeholders})", values)
+                    conn.execute(P(f"INSERT INTO accounts_master ({col_names}) VALUES ({placeholders})"), values)
                     inserted += 1
                 except Exception as e:
                     print(f"Restore skip accounts_master: {e}")
             summary['accounts_master'] = inserted
 
         # Clear user's data only
-        conn.execute("DELETE FROM journal_entries WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM opening_balances WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM counterparties WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
+        conn.execute(P("DELETE FROM journal_entries WHERE user_id = ?"), (user_id,))
+        conn.execute(P("DELETE FROM opening_balances WHERE user_id = ?"), (user_id,))
+        conn.execute(P("DELETE FROM counterparties WHERE user_id = ?"), (user_id,))
+        conn.execute(P("DELETE FROM user_settings WHERE user_id = ?"), (user_id,))
 
         # Restore journal_entries
         je_rows = data.get('journal_entries', [])
@@ -709,9 +731,9 @@ def restore_from_backup(data: dict, user_id: int = 0) -> dict:
             try:
                 row_user_id = user_id  # Force to current user
                 conn.execute(
-                    """INSERT INTO journal_entries (user_id, entry_date, debit_account_id, credit_account_id,
+                    P("""INSERT INTO journal_entries (user_id, entry_date, debit_account_id, credit_account_id,
                        amount, tax_classification, tax_amount, counterparty, memo, evidence_url, source, is_deleted, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""),
                     (row_user_id, row.get('entry_date'), row.get('debit_account_id'), row.get('credit_account_id'),
                      row.get('amount', 0), row.get('tax_classification', '10%'), row.get('tax_amount', 0),
                      row.get('counterparty', ''), row.get('memo', ''), row.get('evidence_url', ''),
@@ -729,7 +751,7 @@ def restore_from_backup(data: dict, user_id: int = 0) -> dict:
         for row in ob_rows:
             try:
                 conn.execute(
-                    "INSERT INTO opening_balances (user_id, fiscal_year, account_id, amount, note) VALUES (?, ?, ?, ?, ?)",
+                    P("INSERT INTO opening_balances (user_id, fiscal_year, account_id, amount, note) VALUES (?, ?, ?, ?, ?)"),
                     (user_id, row.get('fiscal_year'), row.get('account_id'), row.get('amount', 0), row.get('note', ''))
                 )
                 inserted += 1
@@ -743,7 +765,7 @@ def restore_from_backup(data: dict, user_id: int = 0) -> dict:
         for row in cp_rows:
             try:
                 conn.execute(
-                    "INSERT INTO counterparties (user_id, name, code, contact_info, notes, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+                    P("INSERT INTO counterparties (user_id, name, code, contact_info, notes, is_active) VALUES (?, ?, ?, ?, ?, ?)"),
                     (user_id, row.get('name', ''), row.get('code', ''), row.get('contact_info', ''), row.get('notes', ''), row.get('is_active', 1))
                 )
                 inserted += 1
@@ -759,16 +781,23 @@ def restore_from_backup(data: dict, user_id: int = 0) -> dict:
                 key = row.get('key', '')
                 value = row.get('value', '')
                 if key:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
-                        (user_id, key, value)
-                    )
+                    if USE_PG:
+                        conn.execute(
+                            "INSERT INTO user_settings (user_id, key, value) VALUES (%s, %s, %s) ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value",
+                            (user_id, key, value)
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)",
+                            (user_id, key, value)
+                        )
                     inserted += 1
             except Exception as e:
                 print(f"Restore skip settings: {e}")
         summary['settings'] = inserted
 
-        conn.execute("PRAGMA foreign_keys=ON")
+        if not USE_PG:
+            conn.execute("PRAGMA foreign_keys=ON")
         conn.commit()
         return summary
     except Exception as e:
@@ -792,7 +821,7 @@ def get_journal_export(start_date=None, end_date=None, user_id: int = 0) -> list
             conditions.append("je.entry_date <= ?")
             params.append(end_date)
         where = " AND ".join(conditions)
-        rows = conn.execute(f"""
+        rows = conn.execute(P(f"""
         SELECT je.entry_date, da.code AS debit_code, da.name AS debit_account,
                ca.code AS credit_code, ca.name AS credit_account,
                je.amount, je.tax_classification, je.tax_amount,
@@ -802,7 +831,7 @@ def get_journal_export(start_date=None, end_date=None, user_id: int = 0) -> list
         JOIN accounts_master ca ON je.credit_account_id = ca.id
         WHERE {where}
         ORDER BY je.entry_date ASC, je.id ASC
-        """, params).fetchall()
+        """), params).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -813,13 +842,13 @@ def get_accounting_history(limit=200, user_id: int = 0) -> list:
     """Get recent journal entries for AI context (user-scoped)."""
     conn = get_db()
     try:
-        rows = conn.execute("""
+        rows = conn.execute(P("""
         SELECT je.counterparty, je.memo, da.name AS account
         FROM journal_entries je
         JOIN accounts_master da ON je.debit_account_id = da.id
         WHERE je.is_deleted = 0 AND je.counterparty != '' AND je.user_id = ?
         ORDER BY je.id DESC LIMIT ?
-        """, (user_id, limit)).fetchall()
+        """), (user_id, limit)).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -830,7 +859,7 @@ def get_existing_entry_keys(user_id: int = 0) -> set:
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT entry_date, amount, counterparty FROM journal_entries WHERE is_deleted = 0 AND user_id = ?",
+            P("SELECT entry_date, amount, counterparty FROM journal_entries WHERE is_deleted = 0 AND user_id = ?"),
             (user_id,)
         ).fetchall()
         return {f"{r['entry_date']}_{r['amount']}_{r['counterparty']}" for r in rows}
@@ -845,7 +874,7 @@ def _resolve_account_id(conn, account_id=None, account_name=None) -> int:
         return int(account_id)
     if account_name:
         row = conn.execute(
-            "SELECT id FROM accounts_master WHERE name = ? AND is_active = 1",
+            P("SELECT id FROM accounts_master WHERE name = ? AND is_active = 1"),
             (account_name.strip(),)
         ).fetchone()
         if row:
@@ -872,46 +901,51 @@ def get_monthly_summary(fiscal_year: str, user_id: int = 0) -> dict:
         fy_start = f"{fiscal_year}-01-01"
         fy_end = f"{fiscal_year}-12-31"
 
+        if USE_PG:
+            month_expr = "to_char(je.entry_date::date, 'MM')"
+        else:
+            month_expr = "strftime('%m', je.entry_date)"
+
         # Monthly revenue (売上) by month
-        revenue_sql = """
-        SELECT strftime('%m', je.entry_date) AS month,
+        revenue_sql = P(f"""
+        SELECT {month_expr} AS month,
                SUM(je.amount) AS total
         FROM journal_entries je
         JOIN accounts_master am ON je.credit_account_id = am.id
         WHERE je.is_deleted = 0 AND je.user_id = ?
           AND je.entry_date >= ? AND je.entry_date <= ?
           AND am.account_type = '収益'
-        GROUP BY strftime('%m', je.entry_date)
-        """
+        GROUP BY {month_expr}
+        """)
         rev_rows = conn.execute(revenue_sql, (user_id, fy_start, fy_end)).fetchall()
         rev_by_month = {int(r['month']): r['total'] for r in rev_rows}
 
-        # Monthly purchases (仕入) by month — code 500
-        purchase_sql = """
-        SELECT strftime('%m', je.entry_date) AS month,
+        # Monthly purchases (仕入) by month -- code 500
+        purchase_sql = P(f"""
+        SELECT {month_expr} AS month,
                SUM(je.amount) AS total
         FROM journal_entries je
         JOIN accounts_master am ON je.debit_account_id = am.id
         WHERE je.is_deleted = 0 AND je.user_id = ?
           AND je.entry_date >= ? AND je.entry_date <= ?
           AND am.code = '500'
-        GROUP BY strftime('%m', je.entry_date)
-        """
+        GROUP BY {month_expr}
+        """)
         pur_rows = conn.execute(purchase_sql, (user_id, fy_start, fy_end)).fetchall()
         pur_by_month = {int(r['month']): r['total'] for r in pur_rows}
 
         # Monthly expense totals by account (for page 1 detail)
-        expense_sql = """
+        expense_sql = P(f"""
         SELECT am.code, am.name,
-               strftime('%m', je.entry_date) AS month,
+               {month_expr} AS month,
                SUM(je.amount) AS total
         FROM journal_entries je
         JOIN accounts_master am ON je.debit_account_id = am.id
         WHERE je.is_deleted = 0 AND je.user_id = ?
           AND je.entry_date >= ? AND je.entry_date <= ?
           AND am.account_type = '費用'
-        GROUP BY am.code, am.name, strftime('%m', je.entry_date)
-        """
+        GROUP BY am.code, am.name, {month_expr}
+        """)
         exp_rows = conn.execute(expense_sql, (user_id, fy_start, fy_end)).fetchall()
 
         # Build per-account monthly breakdown
@@ -964,7 +998,7 @@ def get_import_by_hash(file_hash: str, user_id: int = 0):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT * FROM import_history WHERE file_hash = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1",
+            P("SELECT * FROM import_history WHERE file_hash = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1"),
             (file_hash, user_id)
         ).fetchone()
         return dict(row) if row else None
@@ -980,16 +1014,21 @@ def create_import_record(user_id: int, filename: str, file_hash: str,
     """Record a completed import."""
     conn = get_db()
     try:
-        cursor = conn.execute(
-            """INSERT INTO import_history
+        _sql = """INSERT INTO import_history
             (user_id, filename, file_hash, source_name, row_count, imported_count,
              date_range_start, date_range_end)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user_id, filename, file_hash, source_name, row_count,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+        _params = (user_id, filename, file_hash, source_name, row_count,
              imported_count, date_range_start, date_range_end)
-        )
+        if USE_PG:
+            cur = conn.cursor()
+            cur.execute(P(_sql + " RETURNING id"), _params)
+            new_id = cur.fetchone()['id']
+        else:
+            cur = conn.execute(_sql, _params)
+            new_id = cur.lastrowid
         conn.commit()
-        return cursor.lastrowid
+        return new_id
     except Exception as e:
         print(f"Import record error: {e}")
         conn.rollback()
@@ -1003,7 +1042,7 @@ def get_import_history(user_id: int = 0, limit: int = 20) -> list:
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT * FROM import_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            P("SELECT * FROM import_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?"),
             (user_id, limit)
         ).fetchall()
         return [dict(r) for r in rows]
@@ -1018,7 +1057,7 @@ def get_statement_source(source_name: str, user_id: int = 0):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT * FROM statement_sources WHERE source_name = ? AND user_id = ?",
+            P("SELECT * FROM statement_sources WHERE source_name = ? AND user_id = ?"),
             (source_name, user_id)
         ).fetchone()
         return dict(row) if row else None
@@ -1034,10 +1073,10 @@ def upsert_statement_source(user_id: int, source_name: str,
     conn = get_db()
     try:
         conn.execute(
-            """INSERT INTO statement_sources (user_id, source_name, default_debit, default_credit)
+            P(f"""INSERT INTO statement_sources (user_id, source_name, default_debit, default_credit)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(user_id, source_name)
-            DO UPDATE SET default_debit = ?, default_credit = ?, updated_at = datetime('now')""",
+            DO UPDATE SET default_debit = ?, default_credit = ?, updated_at = {_NOW}"""),
             (user_id, source_name, default_debit, default_credit,
              default_debit, default_credit)
         )
