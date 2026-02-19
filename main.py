@@ -17,6 +17,10 @@ import models
 
 load_dotenv()
 
+print("=== Hinakira Accounting Starting ===", flush=True)
+print(f"Python version: {__import__('sys').version}", flush=True)
+print(f"Working directory: {os.getcwd()}", flush=True)
+
 # In-memory cache: access_token -> {user: dict, expires: timestamp}
 # Avoids calling Google UserInfo API on every request
 _token_cache = {}
@@ -27,11 +31,22 @@ CORS(app)
 
 # Initialize database on startup (includes migration for existing DBs)
 try:
+    print(f"DB_PATH will be: {db.DB_PATH}", flush=True)
     db.init_db()
+    print("Database initialized successfully", flush=True)
 except Exception as e:
-    print(f"CRITICAL: Database initialization failed: {e}")
+    print(f"CRITICAL: Database initialization failed: {e}", flush=True)
     import traceback
     traceback.print_exc()
+
+
+# ============================
+#  Health Check (no auth needed)
+# ============================
+@app.route('/healthz')
+def healthz():
+    """Health check endpoint for Render."""
+    return jsonify({"status": "ok"}), 200
 
 
 # ============================
