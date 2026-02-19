@@ -1400,8 +1400,9 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
       初年度 = 年間償却額 × 使用月数 ÷ 12 (取得月〜12月, 端数切捨て)
       最終年度: 備忘価額1円になるまで
 
-    売却: closing_bv=0, 売却損益を計算, 備考に表示
-    除却: closing_bv=0, 残額全額が償却費, 備考に「除却」
+    売却/除却: まず当年分の通常の償却費を計上し、
+      除却 → 償却後の帳簿価額が除却損
+      売却 → 売却額との差額が売却損益（譲渡所得）
 
     Returns list of dicts with per-asset depreciation details for the fiscal year.
     """
@@ -1479,12 +1480,26 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
 
         # --- Handle disposal in this fiscal year ---
         if disp_year == fy and disposal_type:
+            # Step 1: Calculate normal depreciation for this year first
+            if fy == acq_year:
+                months_used = 12 - acq_month + 1
+                this_year_dep = annual_amount * months_used // 12
+            else:
+                this_year_dep = annual_amount
+            remaining = depreciable - cumulative_before
+            if this_year_dep > remaining:
+                this_year_dep = remaining
+            # Book value after normal depreciation
+            bv_after_dep = opening_bv - this_year_dep
+
             if disposal_type == '除却':
-                # 除却: remaining book value (minus 備忘価額) becomes depreciation
-                this_year_dep = opening_bv - 1 if opening_bv > 1 else 0
-                # If fully depreciated, remove 備忘価額
-                if opening_bv <= 1:
-                    this_year_dep = 0
+                # 除却: normal depreciation + remaining BV is 除却損
+                # closing_bv = 0 (asset removed entirely)
+                retirement_loss = bv_after_dep  # 帳簿価額そのものが除却損（備忘価額含む）
+                if bv_after_dep <= 1:
+                    disp_remark = '除却（償却済）'
+                else:
+                    disp_remark = f'除却（固定資産除却損 {bv_after_dep:,}円）'
                 result.append({
                     'id': asset['id'],
                     'asset_name': asset['asset_name'],
@@ -1498,17 +1513,16 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                     'closing_book_value': 0,
                     'annual_rate': round(1 / life, 4) if life else 0,
                     'disposal_type': '除却',
-                    'disposal_remark': f'除却（固定資産除却損 {opening_bv - 1:,}円）' if opening_bv > 1 else '除却（償却済）',
+                    'disposal_remark': disp_remark,
                 })
             elif disposal_type == '売却':
-                # 売却: book value → 0, gain/loss = disposal_price - opening_bv
-                gain_loss = disposal_price - opening_bv
+                # 売却: normal depreciation + gain/loss vs sale price
+                # gain/loss = disposal_price - bv_after_dep
+                gain_loss = disposal_price - bv_after_dep
                 if gain_loss >= 0:
                     gl_text = f'売却益 {gain_loss:,}円'
                 else:
                     gl_text = f'売却損 {abs(gain_loss):,}円'
-                # Depreciation for sale year = book value (asset removed)
-                this_year_dep = opening_bv  # 帳簿価額全額が費用
                 result.append({
                     'id': asset['id'],
                     'asset_name': asset['asset_name'],
@@ -1518,7 +1532,7 @@ def calculate_depreciation(user_id: int = 0, fiscal_year: str = '2025') -> list:
                     'depreciation_method': method,
                     'notes': remark,
                     'opening_book_value': opening_bv,
-                    'depreciation_amount': 0,  # 通常の減価償却は0
+                    'depreciation_amount': this_year_dep,
                     'closing_book_value': 0,
                     'annual_rate': round(1 / life, 4) if life else 0,
                     'disposal_type': '売却',
