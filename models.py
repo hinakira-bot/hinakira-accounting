@@ -341,6 +341,25 @@ def get_recent_entries(limit=5, user_id: int = 0) -> list:
         conn.close()
 
 
+def get_latest_entry_date(fiscal_year: str, user_id: int = 0) -> str:
+    """Get the latest journal entry date within a fiscal year."""
+    conn = get_db()
+    try:
+        fy_start = f"{fiscal_year}-01-01"
+        fy_end = f"{fiscal_year}-12-31"
+        row = conn.execute(P("""
+        SELECT MAX(je.entry_date) AS latest_date
+        FROM journal_entries je
+        WHERE je.is_deleted = 0 AND je.user_id = ?
+          AND je.entry_date >= ? AND je.entry_date <= ?
+        """), (user_id, fy_start, fy_end)).fetchone()
+        if row and row['latest_date']:
+            return row['latest_date']
+        return None
+    finally:
+        conn.close()
+
+
 def update_journal_entry(entry_id: int, entry: dict, user_id: int = 0) -> bool:
     """Update a journal entry (user-scoped ownership check)."""
     conn = get_db()

@@ -635,6 +635,15 @@ def api_journal_recent():
     return jsonify({"entries": entries})
 
 
+@app.route('/api/journal/latest-date', methods=['GET'])
+def api_journal_latest_date():
+    """Get the latest journal entry date for a fiscal year."""
+    uid = get_user_id()
+    fiscal_year = request.args.get('fiscal_year', str(datetime.date.today().year))
+    latest = models.get_latest_entry_date(fiscal_year, user_id=uid)
+    return jsonify({"latest_date": latest})
+
+
 @app.route('/api/journal', methods=['POST'])
 def api_journal_create():
     """Create one or more journal entries."""

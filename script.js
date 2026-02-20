@@ -48,8 +48,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return parseInt(globalFiscalYearSelect.value) || thisYear;
     }
 
+    // Callbacks registered later (after all views are initialized)
+    const fiscalYearChangeCallbacks = [];
     globalFiscalYearSelect.addEventListener('change', () => {
         localStorage.setItem('hinakira_fiscal_year', globalFiscalYearSelect.value);
+        fiscalYearChangeCallbacks.forEach(fn => fn());
     });
 
     // ============================================================
@@ -218,16 +221,63 @@ document.addEventListener('DOMContentLoaded', () => {
     const VIEW_LOADERS = {
         'journal-input': () => { loadRecentEntries(); },
         'scan': () => {},
-        'journal-book': () => loadJournalBook(),
-        'ledger': () => loadCurrentLedgerSubTab(),
+        'journal-book': () => initViewWithLatestDate('jb'),
+        'ledger': () => initViewWithLatestDate('ledger'),
         'counterparty': () => loadCounterpartyList(),
         'accounts': () => loadAccountsList(),
         'opening-balance': () => loadOpeningBalances(),
         'backup': () => {},
-        'output': () => {},
+        'output': () => { applyFiscalYearToOutput(); },
         'fixed-assets': () => loadFixedAssetsList(),
-        'consumption-tax': () => loadConsumptionTax(),
+        'consumption-tax': () => { applyFiscalYearToTaxInputs(); loadConsumptionTax(); },
     };
+
+    // --- Fetch latest entry date and set year/month selectors accordingly ---
+    let _latestDateCache = {};
+
+    async function initViewWithLatestDate(viewType) {
+        const fy = getSelectedFiscalYear();
+        const cacheKey = `${fy}_${viewType}`;
+
+        // Determine target selectors
+        const yearSelect = viewType === 'jb'
+            ? document.getElementById('jb-year-select')
+            : document.getElementById('ledger-year-select');
+        const monthSelect = viewType === 'jb'
+            ? document.getElementById('jb-month-select')
+            : document.getElementById('ledger-month-select');
+
+        // Set year to fiscal year
+        yearSelect.value = String(fy);
+
+        // Fetch latest date (with simple cache)
+        if (!_latestDateCache[cacheKey]) {
+            try {
+                const data = await fetchAPI(`/api/journal/latest-date?fiscal_year=${fy}`);
+                _latestDateCache[cacheKey] = data.latest_date || null;
+            } catch (e) {
+                _latestDateCache[cacheKey] = null;
+            }
+        }
+
+        const latestDate = _latestDateCache[cacheKey];
+        if (latestDate) {
+            const latestMonth = parseInt(latestDate.substring(5, 7));
+            monthSelect.value = String(latestMonth);
+        } else {
+            // No entries: default to January
+            monthSelect.value = '1';
+        }
+
+        // Apply period and load
+        if (viewType === 'jb') {
+            applyJBPeriod();
+            loadJournalBook();
+        } else {
+            applyPeriod();
+            loadCurrentLedgerSubTab();
+        }
+    }
 
     function showMenu() {
         // Hide all content views
@@ -2467,8 +2517,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const outStartInput = document.getElementById('out-start');
     const outEndInput = document.getElementById('out-end');
 
-    outStartInput.value = `${thisYear}-01-01`;
-    outEndInput.value = `${thisYear}-12-31`;
+    function applyFiscalYearToOutput() {
+        const fy = getSelectedFiscalYear();
+        outStartInput.value = `${fy}-01-01`;
+        outEndInput.value = `${fy}-12-31`;
+    }
+    applyFiscalYearToOutput();
 
     function outParams() {
         const p = new URLSearchParams();
@@ -4085,12 +4139,16 @@ document.addEventListener('DOMContentLoaded', () => {
         ['tax-start', 'tax-end'],
         ['tax-calc-start', 'tax-calc-end'],
     ];
-    taxDateInputs.forEach(([startId, endId]) => {
-        const s = document.getElementById(startId);
-        const e = document.getElementById(endId);
-        if (s) s.value = `${thisYear}-01-01`;
-        if (e) e.value = `${thisYear}-12-31`;
-    });
+    function applyFiscalYearToTaxInputs() {
+        const fy = getSelectedFiscalYear();
+        taxDateInputs.forEach(([startId, endId]) => {
+            const s = document.getElementById(startId);
+            const e = document.getElementById(endId);
+            if (s) s.value = `${fy}-01-01`;
+            if (e) e.value = `${fy}-12-31`;
+        });
+    }
+    applyFiscalYearToTaxInputs();
 
     // --- Load tax summary (科目別消費税一覧) ---
     const taxSummaryLoadBtn = document.getElementById('tax-summary-load');
@@ -4568,6 +4626,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.key === 'Enter' && licenseActivateBtn) licenseActivateBtn.click();
         });
     }
+
+    // ============================================================
+    //  Register global fiscal year change callbacks
+    // ============================================================
+    fiscalYearChangeCallbacks.push(() => {
+        _latestDateCache = {}; // Clear cache when year changes
+        applyFiscalYearConstraint(); // Update journal input date range
+        applyFiscalYearToOutput();   // Update output date range
+        applyFiscalYearToTaxInputs(); // Update tax date range
+    });
 
     // ============================================================
     //  Initial route from hash (must be at end after all declarations)
