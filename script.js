@@ -4094,7 +4094,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         tbody.innerHTML = taxableRows.map(r => {
             const net = r.total_amount - r.total_tax;
-            return `<tr><td>${r.name}</td><td class="text-right">${fmt(r.total_amount)}</td><td>${r.tax_classification}</td><td class="text-right">${fmt(net)}</td><td class="text-right">${fmt(r.total_tax)}</td></tr>`;
+            return `<tr class="tax-drill-row" data-account-id="${r.account_id || ''}" data-tax-class="${r.tax_classification}" data-side="credit" data-name="${r.name}" style="cursor:pointer;"><td>${r.name}</td><td class="text-right">${fmt(r.total_amount)}</td><td>${r.tax_classification}</td><td class="text-right">${fmt(net)}</td><td class="text-right">${fmt(r.total_tax)}</td></tr>`;
         }).join('');
         tfoot.innerHTML = `<tr class="tax-tfoot-row"><td><strong>合計</strong></td><td class="text-right"><strong>${fmt(agg.taxable_total)}</strong></td><td></td><td class="text-right"><strong>${fmt(agg.net_total)}</strong></td><td class="text-right"><strong>${fmt(agg.tax_total)}</strong></td></tr>`;
     }
@@ -4111,7 +4111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         tbody.innerHTML = taxableRows.map(r => {
             const net = r.total_amount - r.total_tax;
-            return `<tr><td>${r.name}</td><td class="text-right">${fmt(r.total_amount)}</td><td>${r.tax_classification}</td><td class="text-right">${fmt(net)}</td><td class="text-right">${fmt(r.total_tax)}</td></tr>`;
+            return `<tr class="tax-drill-row" data-account-id="${r.account_id || ''}" data-tax-class="${r.tax_classification}" data-side="debit" data-name="${r.name}" style="cursor:pointer;"><td>${r.name}</td><td class="text-right">${fmt(r.total_amount)}</td><td>${r.tax_classification}</td><td class="text-right">${fmt(net)}</td><td class="text-right">${fmt(r.total_tax)}</td></tr>`;
         }).join('');
         tfoot.innerHTML = `<tr class="tax-tfoot-row"><td><strong>合計</strong></td><td class="text-right"><strong>${fmt(agg.taxable_total)}</strong></td><td></td><td class="text-right"><strong>${fmt(agg.net_total)}</strong></td><td class="text-right"><strong>${fmt(agg.tax_total)}</strong></td></tr>`;
     }
@@ -4122,16 +4122,119 @@ document.addEventListener('DOMContentLoaded', () => {
         const nontaxSales = sales.filter(r => r.tax_classification === '非課税' || r.tax_classification === '不課税');
         const nontaxPurchases = purchases.filter(r => r.tax_classification === '非課税' || r.tax_classification === '不課税');
         const allNontax = [
-            ...nontaxSales.map(r => ({ ...r, side: '売上' })),
-            ...nontaxPurchases.map(r => ({ ...r, side: '仕入' })),
+            ...nontaxSales.map(r => ({ ...r, side: r.account_type === '収益' ? 'credit' : 'debit' })),
+            ...nontaxPurchases.map(r => ({ ...r, side: 'debit' })),
         ];
         if (allNontax.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-muted">該当データなし</td></tr>';
             return;
         }
         tbody.innerHTML = allNontax.map(r => {
-            return `<tr><td>${r.name}（${r.side}）</td><td>${r.tax_classification}</td><td class="text-right">${fmt(r.total_amount)}</td></tr>`;
+            const sideLabel = r.side === 'credit' ? '売上' : '仕入';
+            return `<tr class="tax-drill-row" data-account-id="${r.account_id || ''}" data-tax-class="${r.tax_classification}" data-side="${r.side}" data-name="${r.name}" style="cursor:pointer;"><td>${r.name}（${sideLabel}）</td><td>${r.tax_classification}</td><td class="text-right">${fmt(r.total_amount)}</td></tr>`;
         }).join('');
+    }
+
+    // --- Tax drill-down: show journal entries for a clicked account ---
+    const taxDrillPanel = document.getElementById('tax-drill-panel');
+    const taxDrillBack = document.getElementById('tax-drill-back');
+    const taxDrillTitle = document.getElementById('tax-drill-title');
+    const taxDrillTbody = document.getElementById('tax-drill-tbody');
+    const taxDrillPager = document.getElementById('tax-drill-pager');
+    let taxDrillCurrentParams = {};
+
+    // Delegate click on tax summary table rows
+    document.getElementById('view-consumption-tax').addEventListener('click', (e) => {
+        const row = e.target.closest('.tax-drill-row');
+        if (!row) return;
+        const accountId = row.dataset.accountId;
+        const taxClass = row.dataset.taxClass;
+        const side = row.dataset.side;
+        const name = row.dataset.name;
+        if (!accountId) return;
+
+        taxDrillCurrentParams = { accountId, taxClass, side, name, page: 1 };
+        loadTaxDrillDown();
+    });
+
+    if (taxDrillBack) {
+        taxDrillBack.addEventListener('click', () => {
+            taxDrillPanel.classList.add('hidden');
+        });
+    }
+
+    async function loadTaxDrillDown(page = 1) {
+        const { accountId, taxClass, side, name } = taxDrillCurrentParams;
+        const startDate = document.getElementById('tax-start').value;
+        const endDate = document.getElementById('tax-end').value;
+
+        const p = new URLSearchParams({
+            account_id: accountId,
+            account_side: side,
+            tax_classification: taxClass,
+            per_page: '50',
+            page: String(page),
+        });
+        if (startDate) p.set('start_date', startDate);
+        if (endDate) p.set('end_date', endDate);
+
+        try {
+            const data = await fetchAPI('/api/journal?' + p.toString());
+            const entries = data.entries || [];
+            taxDrillTitle.textContent = `${name}（${taxClass}）の仕訳明細`;
+            taxDrillPanel.classList.remove('hidden');
+
+            if (!entries.length) {
+                taxDrillTbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--text-dim);">該当する仕訳がありません</td></tr>';
+                taxDrillPager.innerHTML = '';
+                return;
+            }
+
+            taxDrillTbody.innerHTML = entries.map(e => {
+                return `<tr data-entry-id="${e.id}" style="cursor:pointer;">
+                    <td>${e.entry_date || ''}</td>
+                    <td>${e.debit_account || ''}</td>
+                    <td>${e.credit_account || ''}</td>
+                    <td class="text-right">${fmt(e.amount)}</td>
+                    <td>${e.tax_classification || ''}</td>
+                    <td>${e.counterparty || ''}</td>
+                    <td>${e.memo || ''}</td>
+                </tr>`;
+            }).join('');
+
+            // Click row to open edit modal
+            taxDrillTbody.querySelectorAll('tr[data-entry-id]').forEach(row => {
+                row.addEventListener('click', () => {
+                    const id = row.dataset.entryId;
+                    const entry = entries.find(en => String(en.id) === String(id));
+                    if (entry) openJEDetailModal(entry, () => {
+                        loadTaxDrillDown(page);
+                        loadTaxSummary();
+                    });
+                });
+            });
+
+            // Pager
+            const total = data.total || 0;
+            const perPage = data.per_page || 50;
+            const totalPages = Math.ceil(total / perPage);
+            if (totalPages > 1) {
+                let pagerHtml = '';
+                for (let i = 1; i <= totalPages; i++) {
+                    pagerHtml += `<button class="btn btn-sm ${i === page ? 'btn-primary' : 'btn-ghost'}" data-page="${i}">${i}</button> `;
+                }
+                taxDrillPager.innerHTML = pagerHtml;
+                taxDrillPager.querySelectorAll('button').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        loadTaxDrillDown(parseInt(btn.dataset.page));
+                    });
+                });
+            } else {
+                taxDrillPager.innerHTML = '';
+            }
+        } catch (err) {
+            showToast('仕訳明細の読み込みに失敗しました', true);
+        }
     }
 
     // --- Load tax calculation (消費税計算) ---

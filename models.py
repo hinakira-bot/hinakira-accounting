@@ -257,8 +257,16 @@ def get_journal_entries(filters: dict = None, user_id: int = 0) -> dict:
             conditions.append("je.entry_date <= ?")
             params.append(filters['end_date'])
         if filters.get('account_id'):
-            conditions.append("(je.debit_account_id = ? OR je.credit_account_id = ?)")
-            params.extend([filters['account_id'], filters['account_id']])
+            side = filters.get('account_side', '')
+            if side == 'debit':
+                conditions.append("je.debit_account_id = ?")
+                params.append(int(filters['account_id']))
+            elif side == 'credit':
+                conditions.append("je.credit_account_id = ?")
+                params.append(int(filters['account_id']))
+            else:
+                conditions.append("(je.debit_account_id = ? OR je.credit_account_id = ?)")
+                params.extend([filters['account_id'], filters['account_id']])
         if filters.get('counterparty'):
             conditions.append("je.counterparty LIKE ?")
             params.append(f"%{filters['counterparty']}%")
@@ -271,6 +279,9 @@ def get_journal_entries(filters: dict = None, user_id: int = 0) -> dict:
         if filters.get('amount_max'):
             conditions.append("je.amount <= ?")
             params.append(int(filters['amount_max']))
+        if filters.get('tax_classification'):
+            conditions.append("je.tax_classification = ?")
+            params.append(filters['tax_classification'])
 
         where = " AND ".join(conditions)
 
@@ -1777,26 +1788,26 @@ def get_tax_summary(start_date=None, end_date=None, user_id: int = 0) -> dict:
 
         # Sales side: credit_account is revenue type
         sales_sql = P(f"""
-        SELECT am.code, am.name, je.tax_classification,
+        SELECT am.id AS account_id, am.code, am.name, je.tax_classification,
                SUM(je.amount) AS total_amount,
                SUM(je.tax_amount) AS total_tax
         FROM journal_entries je
         JOIN accounts_master am ON je.credit_account_id = am.id
         WHERE {date_cond} AND am.account_type = '収益'
-        GROUP BY am.code, am.name, je.tax_classification
+        GROUP BY am.id, am.code, am.name, je.tax_classification
         ORDER BY am.code, je.tax_classification
         """)
         sales_rows = conn.execute(sales_sql, params).fetchall()
 
         # Purchase side: debit_account is expense type
         purchase_sql = P(f"""
-        SELECT am.code, am.name, je.tax_classification,
+        SELECT am.id AS account_id, am.code, am.name, je.tax_classification,
                SUM(je.amount) AS total_amount,
                SUM(je.tax_amount) AS total_tax
         FROM journal_entries je
         JOIN accounts_master am ON je.debit_account_id = am.id
         WHERE {date_cond} AND am.account_type = '費用'
-        GROUP BY am.code, am.name, je.tax_classification
+        GROUP BY am.id, am.code, am.name, je.tax_classification
         ORDER BY am.code, je.tax_classification
         """)
         purchase_rows = conn.execute(purchase_sql, params).fetchall()

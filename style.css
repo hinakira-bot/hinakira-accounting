@@ -2328,3 +2328,36 @@ tr.pl-subtotal td { border-top: 1px solid #c7d2fe; color: #1e3a8a; }
         flex-direction: column;
     }
 }
+
+/* Tax drill-down rows */
+.tax-drill-row {
+    transition: background 0.12s;
+}
+.tax-drill-row:hover {
+    background: #eef2ff;
+}
+
+/* Tax drill-down panel */
+.tax-drill-panel {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--primary);
+}
+.tax-drill-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+.tax-drill-panel .tb-table tr[data-entry-id] {
+    cursor: pointer;
+    transition: background 0.12s;
+}
+.tax-drill-panel .tb-table tr[data-entry-id]:hover {
+    background: #eef2ff;
+}
+.tax-drill-panel .pager {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}

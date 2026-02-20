@@ -817,6 +817,27 @@
                                 <tbody id="tax-nontax-tbody"></tbody>
                             </table>
                         </div>
+
+                        <!-- Drill-down: 仕訳明細 -->
+                        <div id="tax-drill-panel" class="tax-drill-panel hidden">
+                            <div class="tax-drill-header">
+                                <button id="tax-drill-back" class="btn btn-ghost btn-sm">← 戻る</button>
+                                <h3 id="tax-drill-title" class="card-subtitle"></h3>
+                            </div>
+                            <div class="table-wrap">
+                                <table class="tb-table">
+                                    <thead>
+                                        <tr>
+                                            <th>日付</th><th>借方</th><th>貸方</th>
+                                            <th class="text-right">金額</th><th>税区分</th>
+                                            <th>取引先</th><th>摘要</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tax-drill-tbody"></tbody>
+                                </table>
+                            </div>
+                            <div id="tax-drill-pager" class="pager" style="margin-top:0.5rem;"></div>
+                        </div>
                     </div>
 
                     <!-- Tab: 消費税計算 -->

@@ -612,10 +612,12 @@ def api_journal_list():
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
         'account_id': request.args.get('account_id'),
+        'account_side': request.args.get('account_side'),
         'counterparty': request.args.get('counterparty'),
         'memo': request.args.get('memo'),
         'amount_min': request.args.get('amount_min'),
         'amount_max': request.args.get('amount_max'),
+        'tax_classification': request.args.get('tax_classification'),
         'page': request.args.get('page', 1),
         'per_page': request.args.get('per_page', 20),
     }
