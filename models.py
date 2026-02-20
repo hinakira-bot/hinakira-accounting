@@ -1747,3 +1747,155 @@ def generate_depreciation_journals(user_id: int, fiscal_year: str) -> dict:
         'entries': entries_to_create,
         'message': f'{len(successful)}件の仕訳を生成しました',
     }
+
+
+# ============================
+#  Consumption Tax (消費税)
+# ============================
+
+SIMPLIFIED_RATES = {
+    '1': 90, '2': 80, '3': 70, '4': 60, '5': 50, '6': 40,
+}
+SIMPLIFIED_LABELS = {
+    '1': '第1種（卸売業）', '2': '第2種（小売業）', '3': '第3種（製造業等）',
+    '4': '第4種（その他）', '5': '第5種（サービス業）', '6': '第6種（不動産業）',
+}
+
+
+def get_tax_summary(start_date=None, end_date=None, user_id: int = 0) -> dict:
+    """Get consumption tax summary grouped by account and tax classification."""
+    conn = get_db()
+    try:
+        date_cond = "je.is_deleted = 0 AND je.user_id = ?"
+        params = [user_id]
+        if start_date:
+            date_cond += " AND je.entry_date >= ?"
+            params.append(start_date)
+        if end_date:
+            date_cond += " AND je.entry_date <= ?"
+            params.append(end_date)
+
+        # Sales side: credit_account is revenue type
+        sales_sql = P(f"""
+        SELECT am.code, am.name, je.tax_classification,
+               SUM(je.amount) AS total_amount,
+               SUM(je.tax_amount) AS total_tax
+        FROM journal_entries je
+        JOIN accounts_master am ON je.credit_account_id = am.id
+        WHERE {date_cond} AND am.account_type = '収益'
+        GROUP BY am.code, am.name, je.tax_classification
+        ORDER BY am.code, je.tax_classification
+        """)
+        sales_rows = conn.execute(sales_sql, params).fetchall()
+
+        # Purchase side: debit_account is expense type
+        purchase_sql = P(f"""
+        SELECT am.code, am.name, je.tax_classification,
+               SUM(je.amount) AS total_amount,
+               SUM(je.tax_amount) AS total_tax
+        FROM journal_entries je
+        JOIN accounts_master am ON je.debit_account_id = am.id
+        WHERE {date_cond} AND am.account_type = '費用'
+        GROUP BY am.code, am.name, je.tax_classification
+        ORDER BY am.code, je.tax_classification
+        """)
+        purchase_rows = conn.execute(purchase_sql, params).fetchall()
+
+        sales = [dict(r) for r in sales_rows]
+        purchases = [dict(r) for r in purchase_rows]
+
+        # Aggregated totals
+        def _agg(rows):
+            t10 = sum(r['total_amount'] for r in rows if r['tax_classification'] == '10%')
+            t8 = sum(r['total_amount'] for r in rows if r['tax_classification'] == '8%')
+            tax10 = sum(r['total_tax'] for r in rows if r['tax_classification'] == '10%')
+            tax8 = sum(r['total_tax'] for r in rows if r['tax_classification'] == '8%')
+            nontax = sum(r['total_amount'] for r in rows if r['tax_classification'] == '非課税')
+            exempt = sum(r['total_amount'] for r in rows if r['tax_classification'] == '不課税')
+            return {
+                'amount_10': t10, 'amount_8': t8,
+                'tax_10': tax10, 'tax_8': tax8,
+                'net_10': t10 - tax10, 'net_8': t8 - tax8,
+                'nontax': nontax, 'exempt': exempt,
+                'taxable_total': t10 + t8,
+                'tax_total': tax10 + tax8,
+                'net_total': (t10 - tax10) + (t8 - tax8),
+            }
+
+        return {
+            'sales': sales,
+            'purchases': purchases,
+            'sales_agg': _agg(sales),
+            'purchase_agg': _agg(purchases),
+        }
+    finally:
+        conn.close()
+
+
+def calculate_consumption_tax(start_date, end_date, user_id: int = 0,
+                              method='standard', simplified_category='5') -> dict:
+    """Calculate consumption tax (standard and simplified methods)."""
+    summary = get_tax_summary(start_date, end_date, user_id)
+    sa = summary['sales_agg']
+    pa = summary['purchase_agg']
+
+    # --- Standard method (本則課税) ---
+    # National tax portion: 7.8% out of 10%, 6.24% out of 8%
+    national_tax_sales_10 = sa['net_10'] * 78 // 1000
+    national_tax_sales_8 = sa['net_8'] * 624 // 10000
+    national_tax_sales = national_tax_sales_10 + national_tax_sales_8
+
+    national_tax_purchase_10 = pa['net_10'] * 78 // 1000
+    national_tax_purchase_8 = pa['net_8'] * 624 // 10000
+    national_tax_purchase = national_tax_purchase_10 + national_tax_purchase_8
+
+    standard_national = max(0, national_tax_sales - national_tax_purchase)
+    # Local tax: 22/78 of national tax
+    standard_local = standard_national * 22 // 78
+    standard_total = standard_national + standard_local
+
+    standard = {
+        'sales_net_10': sa['net_10'],
+        'sales_net_8': sa['net_8'],
+        'sales_net_total': sa['net_total'],
+        'sales_tax_10': sa['tax_10'],
+        'sales_tax_8': sa['tax_8'],
+        'sales_tax_total': sa['tax_total'],
+        'purchase_net_10': pa['net_10'],
+        'purchase_net_8': pa['net_8'],
+        'purchase_net_total': pa['net_total'],
+        'purchase_tax_10': pa['tax_10'],
+        'purchase_tax_8': pa['tax_8'],
+        'purchase_tax_total': pa['tax_total'],
+        'national_tax': standard_national,
+        'local_tax': standard_local,
+        'total_due': standard_total,
+    }
+
+    # --- Simplified method (簡易課税) ---
+    deemed_rate = SIMPLIFIED_RATES.get(str(simplified_category), 50)
+    deemed_label = SIMPLIFIED_LABELS.get(str(simplified_category), '第5種（サービス業）')
+
+    simp_national_tax_sales = national_tax_sales_10 + national_tax_sales_8
+    simp_deemed_credit = simp_national_tax_sales * deemed_rate // 100
+    simp_national = max(0, simp_national_tax_sales - simp_deemed_credit)
+    simp_local = simp_national * 22 // 78
+    simp_total = simp_national + simp_local
+
+    simplified = {
+        'sales_net': sa['net_total'],
+        'tax_on_sales': sa['tax_total'],
+        'category': simplified_category,
+        'category_label': deemed_label,
+        'deemed_rate': deemed_rate,
+        'deemed_credit': simp_deemed_credit,
+        'national_tax': simp_national,
+        'local_tax': simp_local,
+        'total_due': simp_total,
+    }
+
+    return {
+        'standard': standard,
+        'simplified': simplified,
+        'summary': summary,
+    }

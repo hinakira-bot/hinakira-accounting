@@ -204,6 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'backup': () => {},
         'output': () => {},
         'fixed-assets': () => loadFixedAssetsList(),
+        'consumption-tax': () => loadConsumptionTax(),
     };
 
     function showMenu() {
@@ -3943,6 +3944,410 @@ document.addEventListener('DOMContentLoaded', () => {
         const w = window.open('', '_blank');
         w.document.write(html);
         w.document.close();
+    }
+
+    // ============================================================
+    //  Section 15c: View — 消費税 (Consumption Tax)
+    // ============================================================
+    // --- Tax sub-tab navigation ---
+    const taxSubNav = document.getElementById('tax-sub-nav');
+    if (taxSubNav) {
+        taxSubNav.addEventListener('click', (e) => {
+            const btn = e.target.closest('.sub-tab-btn');
+            if (!btn) return;
+            const tabId = btn.dataset.taxTab;
+            if (!tabId) return;
+            taxSubNav.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelectorAll('.tax-tab-content').forEach(p => p.classList.remove('active'));
+            const target = document.getElementById(tabId);
+            if (target) target.classList.add('active');
+            // Load data when switching to data tabs
+            if (tabId === 'tax-summary') loadTaxSummary();
+            if (tabId === 'tax-calc') loadTaxCalculation();
+        });
+    }
+
+    // --- Tax settings state ---
+    let taxSettings = {
+        tax_business_type: 'exempt',
+        tax_calculation_method: 'simplified',
+        tax_simplified_category: '5',
+    };
+
+    // --- Toggle simplified section visibility ---
+    function updateSimplifiedVisibility() {
+        const section = document.getElementById('tax-simplified-section');
+        const method = document.querySelector('input[name="tax-calc-method"]:checked');
+        if (section && method) {
+            section.style.display = method.value === 'simplified' ? '' : 'none';
+        }
+    }
+
+    // --- Radio change handlers ---
+    document.querySelectorAll('input[name="tax-calc-method"]').forEach(r => {
+        r.addEventListener('change', updateSimplifiedVisibility);
+    });
+
+    // --- Load consumption tax view ---
+    function loadConsumptionTax() {
+        loadTaxSettings();
+    }
+
+    async function loadTaxSettings() {
+        try {
+            const data = await fetchAPI('/api/settings');
+            taxSettings.tax_business_type = data.tax_business_type || 'exempt';
+            taxSettings.tax_calculation_method = data.tax_calculation_method || 'simplified';
+            taxSettings.tax_simplified_category = data.tax_simplified_category || '5';
+
+            // Set radio buttons
+            const btRadio = document.querySelector(`input[name="tax-business-type"][value="${taxSettings.tax_business_type}"]`);
+            if (btRadio) btRadio.checked = true;
+            const cmRadio = document.querySelector(`input[name="tax-calc-method"][value="${taxSettings.tax_calculation_method}"]`);
+            if (cmRadio) cmRadio.checked = true;
+            const catSelect = document.getElementById('tax-simplified-category');
+            if (catSelect) catSelect.value = taxSettings.tax_simplified_category;
+
+            updateSimplifiedVisibility();
+            updateExemptNotices();
+        } catch (err) {
+            console.warn('loadTaxSettings failed:', err.message);
+        }
+    }
+
+    function updateExemptNotices() {
+        const isExempt = taxSettings.tax_business_type === 'exempt';
+        const n1 = document.getElementById('tax-exempt-notice');
+        const n2 = document.getElementById('tax-exempt-notice2');
+        if (n1) n1.classList.toggle('hidden', !isExempt);
+        if (n2) n2.classList.toggle('hidden', !isExempt);
+    }
+
+    // --- Save tax settings ---
+    const taxSettingsSaveBtn = document.getElementById('tax-settings-save');
+    if (taxSettingsSaveBtn) {
+        taxSettingsSaveBtn.addEventListener('click', async () => {
+            const bt = document.querySelector('input[name="tax-business-type"]:checked');
+            const cm = document.querySelector('input[name="tax-calc-method"]:checked');
+            const cat = document.getElementById('tax-simplified-category');
+            const settings = {
+                tax_business_type: bt ? bt.value : 'exempt',
+                tax_calculation_method: cm ? cm.value : 'simplified',
+                tax_simplified_category: cat ? cat.value : '5',
+            };
+            try {
+                await fetchAPI('/api/settings', 'POST', settings);
+                taxSettings = settings;
+                updateExemptNotices();
+                showToast('消費税設定を保存しました');
+            } catch (err) {
+                showToast('設定の保存に失敗しました', true);
+            }
+        });
+    }
+
+    // --- Set default dates for tax period inputs ---
+    const taxDateInputs = [
+        ['tax-start', 'tax-end'],
+        ['tax-calc-start', 'tax-calc-end'],
+    ];
+    taxDateInputs.forEach(([startId, endId]) => {
+        const s = document.getElementById(startId);
+        const e = document.getElementById(endId);
+        if (s) s.value = `${thisYear}-01-01`;
+        if (e) e.value = `${thisYear}-12-31`;
+    });
+
+    // --- Load tax summary (科目別消費税一覧) ---
+    const taxSummaryLoadBtn = document.getElementById('tax-summary-load');
+    if (taxSummaryLoadBtn) {
+        taxSummaryLoadBtn.addEventListener('click', loadTaxSummary);
+    }
+
+    async function loadTaxSummary() {
+        const startDate = document.getElementById('tax-start').value;
+        const endDate = document.getElementById('tax-end').value;
+        if (!startDate || !endDate) { showToast('期間を指定してください', true); return; }
+
+        try {
+            const p = new URLSearchParams({ start_date: startDate, end_date: endDate });
+            const data = await fetchAPI('/api/tax/summary?' + p.toString());
+
+            renderTaxSalesTable(data.sales || [], data.sales_agg || {});
+            renderTaxPurchaseTable(data.purchases || [], data.purchase_agg || {});
+            renderTaxNontaxTable(data.sales || [], data.purchases || []);
+        } catch (err) {
+            showToast('消費税集計に失敗しました', true);
+        }
+    }
+
+    function renderTaxSalesTable(rows, agg) {
+        const tbody = document.getElementById('tax-sales-tbody');
+        const tfoot = document.getElementById('tax-sales-tfoot');
+        if (!tbody) return;
+        const taxableRows = rows.filter(r => r.tax_classification === '10%' || r.tax_classification === '8%');
+        if (taxableRows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-muted">該当データなし</td></tr>';
+            tfoot.innerHTML = '';
+            return;
+        }
+        tbody.innerHTML = taxableRows.map(r => {
+            const net = r.total_amount - r.total_tax;
+            return `<tr><td>${r.name}</td><td class="text-right">${fmt(r.total_amount)}</td><td>${r.tax_classification}</td><td class="text-right">${fmt(net)}</td><td class="text-right">${fmt(r.total_tax)}</td></tr>`;
+        }).join('');
+        tfoot.innerHTML = `<tr class="tax-tfoot-row"><td><strong>合計</strong></td><td class="text-right"><strong>${fmt(agg.taxable_total)}</strong></td><td></td><td class="text-right"><strong>${fmt(agg.net_total)}</strong></td><td class="text-right"><strong>${fmt(agg.tax_total)}</strong></td></tr>`;
+    }
+
+    function renderTaxPurchaseTable(rows, agg) {
+        const tbody = document.getElementById('tax-purchase-tbody');
+        const tfoot = document.getElementById('tax-purchase-tfoot');
+        if (!tbody) return;
+        const taxableRows = rows.filter(r => r.tax_classification === '10%' || r.tax_classification === '8%');
+        if (taxableRows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-muted">該当データなし</td></tr>';
+            tfoot.innerHTML = '';
+            return;
+        }
+        tbody.innerHTML = taxableRows.map(r => {
+            const net = r.total_amount - r.total_tax;
+            return `<tr><td>${r.name}</td><td class="text-right">${fmt(r.total_amount)}</td><td>${r.tax_classification}</td><td class="text-right">${fmt(net)}</td><td class="text-right">${fmt(r.total_tax)}</td></tr>`;
+        }).join('');
+        tfoot.innerHTML = `<tr class="tax-tfoot-row"><td><strong>合計</strong></td><td class="text-right"><strong>${fmt(agg.taxable_total)}</strong></td><td></td><td class="text-right"><strong>${fmt(agg.net_total)}</strong></td><td class="text-right"><strong>${fmt(agg.tax_total)}</strong></td></tr>`;
+    }
+
+    function renderTaxNontaxTable(sales, purchases) {
+        const tbody = document.getElementById('tax-nontax-tbody');
+        if (!tbody) return;
+        const nontaxSales = sales.filter(r => r.tax_classification === '非課税' || r.tax_classification === '不課税');
+        const nontaxPurchases = purchases.filter(r => r.tax_classification === '非課税' || r.tax_classification === '不課税');
+        const allNontax = [
+            ...nontaxSales.map(r => ({ ...r, side: '売上' })),
+            ...nontaxPurchases.map(r => ({ ...r, side: '仕入' })),
+        ];
+        if (allNontax.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-muted">該当データなし</td></tr>';
+            return;
+        }
+        tbody.innerHTML = allNontax.map(r => {
+            return `<tr><td>${r.name}（${r.side}）</td><td>${r.tax_classification}</td><td class="text-right">${fmt(r.total_amount)}</td></tr>`;
+        }).join('');
+    }
+
+    // --- Load tax calculation (消費税計算) ---
+    const taxCalcLoadBtn = document.getElementById('tax-calc-load');
+    if (taxCalcLoadBtn) {
+        taxCalcLoadBtn.addEventListener('click', loadTaxCalculation);
+    }
+
+    async function loadTaxCalculation() {
+        const startDate = document.getElementById('tax-calc-start').value;
+        const endDate = document.getElementById('tax-calc-end').value;
+        if (!startDate || !endDate) { showToast('期間を指定してください', true); return; }
+
+        try {
+            const p = new URLSearchParams({
+                start_date: startDate,
+                end_date: endDate,
+                method: taxSettings.tax_calculation_method,
+                simplified_category: taxSettings.tax_simplified_category,
+            });
+            const data = await fetchAPI('/api/tax/calculation?' + p.toString());
+            renderTaxCalculation(data);
+        } catch (err) {
+            showToast('消費税計算に失敗しました', true);
+        }
+    }
+
+    function renderTaxCalculation(data) {
+        const s = data.standard || {};
+        const si = data.simplified || {};
+
+        // Standard method
+        document.getElementById('tc-sales-10').textContent = fmt(s.sales_net_10);
+        document.getElementById('tc-sales-8').textContent = fmt(s.sales_net_8);
+        document.getElementById('tc-sales-total').textContent = fmt(s.sales_net_total);
+        document.getElementById('tc-tax-sales-10').textContent = fmt(s.sales_tax_10);
+        document.getElementById('tc-tax-sales-8').textContent = fmt(s.sales_tax_8);
+        document.getElementById('tc-tax-sales-total').textContent = fmt(s.sales_tax_total);
+        document.getElementById('tc-purchase-10').textContent = fmt(s.purchase_net_10);
+        document.getElementById('tc-purchase-8').textContent = fmt(s.purchase_net_8);
+        document.getElementById('tc-purchase-total').textContent = fmt(s.purchase_net_total);
+        document.getElementById('tc-tax-purchase-10').textContent = fmt(s.purchase_tax_10);
+        document.getElementById('tc-tax-purchase-8').textContent = fmt(s.purchase_tax_8);
+        document.getElementById('tc-tax-purchase-total').textContent = fmt(s.purchase_tax_total);
+        document.getElementById('tc-national-tax').textContent = fmt(s.national_tax);
+        document.getElementById('tc-local-tax').textContent = fmt(s.local_tax);
+        document.getElementById('tc-total-due').textContent = fmt(s.total_due);
+
+        // Simplified method
+        document.getElementById('ts-sales').textContent = fmt(si.sales_net);
+        document.getElementById('ts-tax-sales').textContent = fmt(si.tax_on_sales);
+        document.getElementById('ts-category').textContent = si.category_label || '';
+        document.getElementById('ts-deemed-rate').textContent = (si.deemed_rate || 0) + '%';
+        document.getElementById('ts-deemed-credit').textContent = fmt(si.deemed_credit);
+        document.getElementById('ts-national-tax').textContent = fmt(si.national_tax);
+        document.getElementById('ts-local-tax').textContent = fmt(si.local_tax);
+        document.getElementById('ts-total-due').textContent = fmt(si.total_due);
+
+        // Comparison
+        const compSection = document.getElementById('tax-calc-comparison');
+        if (compSection) {
+            compSection.style.display = '';
+            document.getElementById('tc-comp-standard').textContent = fmt(s.total_due) + ' 円';
+            document.getElementById('tc-comp-simplified').textContent = fmt(si.total_due) + ' 円';
+            const diff = (s.total_due || 0) - (si.total_due || 0);
+            const diffEl = document.getElementById('tc-comp-diff');
+            diffEl.textContent = (diff >= 0 ? '+' : '') + fmt(diff) + ' 円';
+            diffEl.style.color = diff > 0 ? '#dc2626' : '#16a34a';
+        }
+
+        // Show/hide sections based on user's method setting
+        const stdSection = document.getElementById('tax-calc-standard-section');
+        const simpSection = document.getElementById('tax-calc-simplified-section');
+        if (taxSettings.tax_calculation_method === 'standard') {
+            if (stdSection) stdSection.style.display = '';
+            if (simpSection) simpSection.style.display = '';
+        } else {
+            if (stdSection) stdSection.style.display = '';
+            if (simpSection) simpSection.style.display = '';
+        }
+    }
+
+    // --- Tax output (アウトプット) ---
+    // CSV
+    const taxOutSummaryCsvBtn = document.getElementById('tax-out-summary-csv');
+    if (taxOutSummaryCsvBtn) {
+        taxOutSummaryCsvBtn.addEventListener('click', async () => {
+            const startDate = outStartInput.value;
+            const endDate = outEndInput.value;
+            if (!startDate || !endDate) { showToast('期間を指定してください', true); return; }
+            try {
+                const p = new URLSearchParams({ start_date: startDate, end_date: endDate });
+                const data = await fetchAPI('/api/tax/summary?' + p.toString());
+                const sa = data.sales_agg || {};
+                const pa = data.purchase_agg || {};
+
+                let csv = '\ufeff勘定科目,税込金額,税率,税抜金額,消費税額,区分\n';
+                (data.sales || []).forEach(r => {
+                    csv += `${r.name},${r.total_amount},${r.tax_classification},${r.total_amount - r.total_tax},${r.total_tax},課税売上\n`;
+                });
+                csv += `課税売上合計,${sa.taxable_total},,${sa.net_total},${sa.tax_total},\n`;
+                csv += '\n';
+                (data.purchases || []).forEach(r => {
+                    csv += `${r.name},${r.total_amount},${r.tax_classification},${r.total_amount - r.total_tax},${r.total_tax},課税仕入\n`;
+                });
+                csv += `課税仕入合計,${pa.taxable_total},,${pa.net_total},${pa.tax_total},\n`;
+
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                downloadBlob(blob, `科目別消費税一覧_${todayStr()}.csv`, 'text/csv');
+                showToast('CSVをダウンロードしました');
+            } catch (err) { showToast('エクスポートに失敗しました', true); }
+        });
+    }
+
+    // Summary PDF
+    const taxOutSummaryPdfBtn = document.getElementById('tax-out-summary-pdf');
+    if (taxOutSummaryPdfBtn) {
+        taxOutSummaryPdfBtn.addEventListener('click', async () => {
+            const startDate = outStartInput.value;
+            const endDate = outEndInput.value;
+            if (!startDate || !endDate) { showToast('期間を指定してください', true); return; }
+            try {
+                const p = new URLSearchParams({ start_date: startDate, end_date: endDate });
+                const data = await fetchAPI('/api/tax/summary?' + p.toString());
+                openTaxSummaryPrintView(startDate, endDate, data);
+            } catch (err) { showToast('エクスポートに失敗しました', true); }
+        });
+    }
+
+    function openTaxSummaryPrintView(startDate, endDate, data) {
+        const sa = data.sales_agg || {};
+        const pa = data.purchase_agg || {};
+
+        function buildTable(rows, agg, title) {
+            const taxableRows = rows.filter(r => r.tax_classification === '10%' || r.tax_classification === '8%');
+            let html = `<h3 style="margin:16px 0 6px;">${title}</h3>`;
+            html += '<table><thead><tr><th>勘定科目</th><th class="r">税込金額</th><th>税率</th><th class="r">税抜金額</th><th class="r">消費税額</th></tr></thead><tbody>';
+            taxableRows.forEach(r => {
+                const net = r.total_amount - r.total_tax;
+                html += `<tr><td>${r.name}</td><td class="r">${fmt(r.total_amount)}</td><td>${r.tax_classification}</td><td class="r">${fmt(net)}</td><td class="r">${fmt(r.total_tax)}</td></tr>`;
+            });
+            html += `</tbody><tfoot><tr style="font-weight:bold;background:#f1f5f9;"><td>合計</td><td class="r">${fmt(agg.taxable_total)}</td><td></td><td class="r">${fmt(agg.net_total)}</td><td class="r">${fmt(agg.tax_total)}</td></tr></tfoot></table>`;
+            return html;
+        }
+
+        let tableHtml = buildTable(data.sales || [], sa, '課税売上');
+        tableHtml += buildTable(data.purchases || [], pa, '課税仕入');
+
+        openPrintView('科目別消費税一覧', `${startDate} ～ ${endDate}`, tableHtml);
+    }
+
+    // Calculation PDF
+    const taxOutCalcPdfBtn = document.getElementById('tax-out-calc-pdf');
+    if (taxOutCalcPdfBtn) {
+        taxOutCalcPdfBtn.addEventListener('click', async () => {
+            const startDate = outStartInput.value;
+            const endDate = outEndInput.value;
+            if (!startDate || !endDate) { showToast('期間を指定してください', true); return; }
+            try {
+                const p = new URLSearchParams({
+                    start_date: startDate,
+                    end_date: endDate,
+                    method: taxSettings.tax_calculation_method,
+                    simplified_category: taxSettings.tax_simplified_category,
+                });
+                const data = await fetchAPI('/api/tax/calculation?' + p.toString());
+                openTaxCalcPrintView(startDate, endDate, data);
+            } catch (err) { showToast('エクスポートに失敗しました', true); }
+        });
+    }
+
+    function openTaxCalcPrintView(startDate, endDate, data) {
+        const s = data.standard || {};
+        const si = data.simplified || {};
+
+        function row(label, val) {
+            return `<tr><td style="padding:6px 12px;">${label}</td><td class="r" style="padding:6px 12px;">${fmt(val)}</td></tr>`;
+        }
+        function headerRow(label) {
+            return `<tr><th colspan="2" style="background:#e2e8f0;padding:6px 12px;text-align:left;font-size:12px;">${label}</th></tr>`;
+        }
+        function totalRow(label, val) {
+            return `<tr style="font-weight:bold;background:#f1f5f9;font-size:13px;"><td style="padding:8px 12px;">${label}</td><td class="r" style="padding:8px 12px;">${fmt(val)} 円</td></tr>`;
+        }
+
+        let html = '<h3 style="margin:12px 0 6px;">本則課税による計算</h3>';
+        html += '<table style="margin-bottom:20px;"><tbody>';
+        html += headerRow('課税売上');
+        html += row('課税売上高（税抜・10%）', s.sales_net_10);
+        html += row('課税売上高（税抜・8%）', s.sales_net_8);
+        html += row('売上に係る消費税額（10%）', s.sales_tax_10);
+        html += row('売上に係る消費税額（8%）', s.sales_tax_8);
+        html += headerRow('課税仕入');
+        html += row('課税仕入高（税抜・10%）', s.purchase_net_10);
+        html += row('課税仕入高（税抜・8%）', s.purchase_net_8);
+        html += row('仕入に係る消費税額（10%）', s.purchase_tax_10);
+        html += row('仕入に係る消費税額（8%）', s.purchase_tax_8);
+        html += headerRow('納付税額');
+        html += row('消費税額（国税）', s.national_tax);
+        html += row('地方消費税額', s.local_tax);
+        html += totalRow('納付すべき消費税額 合計', s.total_due);
+        html += '</tbody></table>';
+
+        html += '<h3 style="margin:20px 0 6px;">簡易課税による計算</h3>';
+        html += '<table><tbody>';
+        html += row('課税売上高（税抜）', si.sales_net);
+        html += row('売上に係る消費税額', si.tax_on_sales);
+        html += row('事業区分', si.category_label);
+        html += row('みなし仕入率', (si.deemed_rate || 0) + '%');
+        html += row('控除対象仕入税額（みなし）', si.deemed_credit);
+        html += row('消費税額（国税）', si.national_tax);
+        html += row('地方消費税額', si.local_tax);
+        html += totalRow('納付すべき消費税額 合計', si.total_due);
+        html += '</tbody></table>';
+
+        openPrintView('消費税計算書', `${startDate} ～ ${endDate}`, html);
     }
 
     // ============================================================

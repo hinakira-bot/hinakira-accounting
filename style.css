@@ -2158,3 +2158,173 @@ tr.pl-subtotal td { border-top: 1px solid #c7d2fe; color: #1e3a8a; }
     gap: 0.75rem;
     margin-top: 1rem;
 }
+
+/* ============================
+   Consumption Tax (消費税)
+   ============================ */
+.tax-tab-content {
+    display: none;
+}
+.tax-tab-content.active {
+    display: block;
+}
+
+.tax-settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+@media (max-width: 768px) {
+    .tax-settings-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.tax-setting-card {
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fafbfc;
+}
+.tax-setting-card h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: var(--text);
+}
+.tax-setting-desc {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-bottom: 0.75rem;
+    line-height: 1.5;
+}
+
+.tax-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.tax-radio {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: border-color 0.15s, background 0.15s;
+}
+.tax-radio:hover {
+    border-color: var(--primary);
+    background: #f0f4ff;
+}
+.tax-radio input[type="radio"] {
+    accent-color: var(--primary);
+}
+
+.tax-select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    background: #fff;
+}
+
+.tax-period-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+.tax-period-bar label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-dim);
+}
+
+.tax-exempt-banner {
+    padding: 0.75rem 1rem;
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    margin-top: 1rem;
+    font-size: 0.8rem;
+    color: #92400e;
+}
+
+.tax-tfoot-row td {
+    background: #f1f5f9;
+    font-weight: 600;
+}
+
+/* Tax calculation table */
+.tax-calc-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+}
+.tax-calc-table td,
+.tax-calc-table th {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+}
+.tax-calc-table td:first-child {
+    color: var(--text-dim);
+}
+.tax-calc-section-header {
+    background: #e2e8f0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-align: left;
+    padding: 0.4rem 0.75rem;
+}
+.tax-calc-subtotal td {
+    font-weight: 600;
+    background: #f8fafc;
+}
+.tax-calc-total td {
+    font-weight: 700;
+    font-size: 0.95rem;
+    background: #eef2ff;
+    border-top: 2px solid var(--primary);
+}
+
+/* Tax comparison cards */
+.tax-comparison-cards {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.75rem;
+}
+.tax-comp-card {
+    flex: 1;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-align: center;
+    background: #fafbfc;
+}
+.tax-comp-card.tax-comp-diff {
+    background: #f8fafc;
+    border-color: var(--primary);
+}
+.tax-comp-label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-bottom: 0.25rem;
+}
+.tax-comp-amount {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text);
+}
+@media (max-width: 768px) {
+    .tax-comparison-cards {
+        flex-direction: column;
+    }
+}

@@ -1382,6 +1382,34 @@ def api_export_ledger():
 
 
 # ============================
+#  Consumption Tax API (消費税)
+# ============================
+@app.route('/api/tax/summary', methods=['GET'])
+def api_tax_summary():
+    """Get consumption tax summary by account and classification."""
+    uid = get_user_id()
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    result = models.get_tax_summary(start_date, end_date, user_id=uid)
+    return jsonify(result)
+
+
+@app.route('/api/tax/calculation', methods=['GET'])
+def api_tax_calculation():
+    """Calculate consumption tax (standard and simplified)."""
+    uid = get_user_id()
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    method = request.args.get('method', 'standard')
+    simplified_category = request.args.get('simplified_category', '5')
+    result = models.calculate_consumption_tax(
+        start_date, end_date, user_id=uid,
+        method=method, simplified_category=simplified_category
+    )
+    return jsonify(result)
+
+
+# ============================
 #  License API (user-facing)
 # ============================
 @app.route('/api/license/status', methods=['GET'])
