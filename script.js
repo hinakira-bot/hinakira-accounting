@@ -58,6 +58,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================================
     //  Section 3: Google OAuth
     // ============================================================
+    let _refreshRetryCount = 0;
+    const MAX_REFRESH_RETRIES = 3;
+    let _refreshResolve = null;  // For 401 retry: resolve when token refreshed
+    let _isRefreshing = false;   // Prevent concurrent refresh attempts
+
     window.onload = function () {
         if (typeof google === 'undefined') {
             console.warn('Google Identity Services not loaded');
@@ -69,12 +74,38 @@ document.addEventListener('DOMContentLoaded', () => {
             callback: (resp) => {
                 if (resp.access_token) {
                     accessToken = resp.access_token;
+                    _refreshRetryCount = 0;
+                    _isRefreshing = false;
                     const expiresIn = resp.expires_in || 3600;
                     const exp = new Date().getTime() + (expiresIn * 1000);
                     sessionStorage.setItem('access_token', accessToken);
                     sessionStorage.setItem('token_expiration', exp);
                     scheduleTokenRefresh(expiresIn);
+                    // Resolve any pending 401 retry
+                    if (_refreshResolve) { _refreshResolve(true); _refreshResolve = null; }
                     onLoginSuccess();
+                }
+            },
+            error_callback: (err) => {
+                console.warn('Token refresh error:', err);
+                _isRefreshing = false;
+                _refreshRetryCount++;
+                if (_refreshRetryCount < MAX_REFRESH_RETRIES) {
+                    // Retry after 30 seconds
+                    console.log(`Token refresh retry ${_refreshRetryCount}/${MAX_REFRESH_RETRIES} in 30s`);
+                    setTimeout(() => {
+                        if (tokenClient) tokenClient.requestAccessToken({ prompt: '' });
+                    }, 30000);
+                } else {
+                    // Max retries reached — prompt user to re-login
+                    console.warn('Token refresh failed after max retries');
+                    if (_refreshResolve) { _refreshResolve(false); _refreshResolve = null; }
+                    if (!isLoggingOut) {
+                        showToast('セッションの更新に失敗しました。再ログインしてください', true);
+                        loginOverlay.classList.remove('hidden');
+                        authBtn.textContent = 'Googleでログイン';
+                        authBtn.onclick = handleLogin;
+                    }
                 }
             },
         });
@@ -87,6 +118,32 @@ document.addEventListener('DOMContentLoaded', () => {
             loginOverlay.classList.remove('hidden');
         }
     };
+
+    // Background tab support: refresh token when tab becomes active
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible' || !accessToken) return;
+        const exp = parseInt(sessionStorage.getItem('token_expiration') || '0');
+        const now = new Date().getTime();
+        const remainingSec = Math.floor((exp - now) / 1000);
+        if (remainingSec <= 0) {
+            // Token already expired — try immediate refresh
+            console.log('Tab active: token expired, refreshing immediately');
+            if (tokenClient && !_isRefreshing) {
+                _isRefreshing = true;
+                tokenClient.requestAccessToken({ prompt: '' });
+            }
+        } else if (remainingSec < 300) {
+            // Token expiring soon — refresh now
+            console.log(`Tab active: token expires in ${remainingSec}s, refreshing`);
+            if (tokenClient && !_isRefreshing) {
+                _isRefreshing = true;
+                tokenClient.requestAccessToken({ prompt: '' });
+            }
+        } else {
+            // Reschedule refresh (timer may have been delayed while tab was background)
+            scheduleTokenRefresh(remainingSec);
+        }
+    });
 
     function handleLogin() { tokenClient && tokenClient.requestAccessToken(); }
     function handleLogout() {
@@ -345,7 +402,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================================
     //  Section 6: Shared Utilities
     // ============================================================
-    async function fetchAPI(url, method = 'GET', body = null) {
+    async function fetchAPI(url, method = 'GET', body = null, _isRetry = false) {
         const opts = { method, headers: {}, cache: 'no-store' };
         // Add Authorization header for all API requests
         if (accessToken) {
@@ -359,7 +416,26 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const res = await fetch(url, opts);
         if (res.status === 401) {
-            // Token expired or invalid — show login overlay (only once)
+            // On first 401, try silent token refresh before logging out
+            if (!_isRetry && tokenClient && !isLoggingOut) {
+                console.log('401 received, attempting token refresh before logout');
+                const refreshed = await new Promise((resolve) => {
+                    _refreshResolve = resolve;
+                    _refreshRetryCount = 0;
+                    _isRefreshing = true;
+                    tokenClient.requestAccessToken({ prompt: '' });
+                    // Timeout: if no callback in 10s, consider failed
+                    setTimeout(() => {
+                        if (_refreshResolve) { _refreshResolve(false); _refreshResolve = null; }
+                    }, 10000);
+                });
+                if (refreshed && accessToken) {
+                    // Token refreshed — retry the original request
+                    console.log('Token refreshed, retrying request');
+                    return fetchAPI(url, method, body, true);
+                }
+            }
+            // Refresh failed or already retried — show login overlay
             if (!isLoggingOut) {
                 isLoggingOut = true;
                 showToast('セッションが切れました。再ログインしてください', true);
