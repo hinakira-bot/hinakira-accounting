@@ -996,6 +996,37 @@ document.addEventListener('DOMContentLoaded', () => {
         return y !== fy;
     }
 
+    // 不課税にすべき勘定科目（事業主勘定・資産間振替など）
+    const NON_TAXABLE_ACCOUNTS = ['事業主貸', '事業主借', '元入金', '普通預金', '現金', '小口現金', '定期預金', '受取手形', '売掛金', '買掛金', '支払手形', '未払金', '前払金', '前受金', '仮払金', '仮受金', '貸付金', '借入金', '預り金', '立替金'];
+
+    function inferTaxClassification(debitName, creditName) {
+        // 両方が不課税対象科目 → 不課税（資産間振替・事業主勘定）
+        const debitNonTax = NON_TAXABLE_ACCOUNTS.includes(debitName);
+        const creditNonTax = NON_TAXABLE_ACCOUNTS.includes(creditName);
+        if (debitNonTax && creditNonTax) return '不課税';
+
+        // 事業主貸・事業主借が片方にある → 不課税
+        if (['事業主貸', '事業主借', '元入金'].includes(debitName) ||
+            ['事業主貸', '事業主借', '元入金'].includes(creditName)) {
+            return '不課税';
+        }
+
+        // 勘定科目マスタの tax_default を参照
+        // 費用科目（借方）の tax_default を優先、次に収益科目（貸方）
+        const debitAcct = accounts.find(a => a.name === debitName);
+        const creditAcct = accounts.find(a => a.name === creditName);
+
+        // 借方が費用科目の場合はその tax_default
+        if (debitAcct && debitAcct.account_type === '費用') return debitAcct.tax_default;
+        // 貸方が収益科目の場合はその tax_default
+        if (creditAcct && creditAcct.account_type === '収益') return creditAcct.tax_default;
+        // それ以外：借方の tax_default → 貸方の tax_default
+        if (debitAcct && debitAcct.tax_default) return debitAcct.tax_default;
+        if (creditAcct && creditAcct.tax_default) return creditAcct.tax_default;
+
+        return null; // 判定できない場合は変更しない
+    }
+
     function renderScanResults() {
         let hasDup = false;
         let hasPriorYear = false;
@@ -1041,7 +1072,20 @@ document.addEventListener('DOMContentLoaded', () => {
         scanTbody.querySelectorAll('.scan-input').forEach(el => {
             el.addEventListener('change', (e) => {
                 const idx = parseInt(e.target.dataset.i);
-                scanResults[idx][e.target.dataset.k] = e.target.value;
+                const key = e.target.dataset.k;
+                scanResults[idx][key] = e.target.value;
+
+                // Auto-update tax classification when account changes
+                if (key === 'debit_account' || key === 'credit_account') {
+                    const row = scanResults[idx];
+                    const newTax = inferTaxClassification(row.debit_account, row.credit_account);
+                    if (newTax && newTax !== row.tax_classification) {
+                        row.tax_classification = newTax;
+                        // Update the select element in the same row
+                        const taxSelect = e.target.closest('tr').querySelector('select[data-k="tax_classification"]');
+                        if (taxSelect) taxSelect.value = newTax;
+                    }
+                }
             });
         });
         scanTbody.querySelectorAll('.scan-delete').forEach(el => {
