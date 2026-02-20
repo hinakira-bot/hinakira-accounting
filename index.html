@@ -112,7 +112,13 @@
             <section id="view-journal-input" class="content-view">
                 <div class="card je-card">
                     <div class="je-header">
-                        <h2 class="je-title">仕訳入力</h2>
+                        <div class="je-title-row">
+                            <div class="je-fiscal-year-selector">
+                                <label for="je-fiscal-year">年度:</label>
+                                <select id="je-fiscal-year"></select>
+                            </div>
+                            <h2 class="je-title">仕訳入力</h2>
+                        </div>
                         <p class="je-ai-hint">💡 取引先・摘要・金額を入力して「AI自動判定」を押すと、借方・貸方・課税区分・税率をAIが自動で判定します。</p>
                         <button type="button" id="je-ai-btn" class="btn btn-ai" title="AI自動判定">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>

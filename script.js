@@ -419,9 +419,41 @@ document.addEventListener('DOMContentLoaded', () => {
     const jeMemo = document.getElementById('je-memo');
     const jeTaxRate = document.getElementById('je-tax-rate');
     const jeAiBtn = document.getElementById('je-ai-btn');
+    const jeFiscalYear = document.getElementById('je-fiscal-year');
+
+    // --- Fiscal year selector ---
+    (function initFiscalYearSelector() {
+        const currentYear = new Date().getFullYear();
+        for (let y = currentYear + 1; y >= currentYear - 5; y--) {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y + '年';
+            if (y === currentYear) opt.selected = true;
+            jeFiscalYear.appendChild(opt);
+        }
+    })();
+
+    function getSelectedFiscalYear() {
+        return parseInt(jeFiscalYear.value) || new Date().getFullYear();
+    }
+
+    function applyFiscalYearConstraint() {
+        const fy = getSelectedFiscalYear();
+        jeDate.min = `${fy}-01-01`;
+        jeDate.max = `${fy}-12-31`;
+        // If current date value is outside new range, adjust it
+        if (jeDate.value < jeDate.min) jeDate.value = jeDate.min;
+        if (jeDate.value > jeDate.max) jeDate.value = jeDate.max;
+    }
+
+    jeFiscalYear.addEventListener('change', () => {
+        applyFiscalYearConstraint();
+        loadRecentEntries();
+    });
 
     // Default date to today
     jeDate.value = todayStr();
+    applyFiscalYearConstraint();
 
     // --- Tax category ↔ Tax rate linkage ---
     jeTaxCategory.addEventListener('change', () => {
@@ -550,12 +582,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Prior year date check for manual input
-        if (isPriorYear(entry.entry_date)) {
-            const origDate = entry.entry_date;
-            if (!confirm(`⚠️ 前年以前の日付（${origDate}）が入力されています。\n\n当年1月1日（${currentYear}-01-01）の仕訳として登録され、摘要に実際の日付が記録されます。\n\n登録しますか？`)) {
-                return;
-            }
+        // Fiscal year range check
+        const fy = getSelectedFiscalYear();
+        const entryYear = parseInt((entry.entry_date || '').substring(0, 4));
+        if (entryYear !== fy) {
+            showToast(`${fy}年度の範囲外の日付です（${fy}/01/01〜${fy}/12/31）`, true);
+            return;
         }
 
         try {
@@ -564,6 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 showToast('仕訳を登録しました');
                 journalForm.reset();
                 jeDate.value = todayStr();
+                applyFiscalYearConstraint();
                 loadRecentEntries();
                 loadCounterparties();
             } else {
@@ -581,7 +614,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let recentEntriesCache = [];
 
     function loadRecentEntries() {
-        fetchAPI('/api/journal/recent?limit=10').then(data => {
+        const fy = getSelectedFiscalYear();
+        fetchAPI(`/api/journal?start_date=${fy}-01-01&end_date=${fy}-12-31&per_page=10&page=1`).then(data => {
             const entries = data.entries || [];
             recentEntriesCache = entries;
             const tbody = document.getElementById('recent-tbody');
