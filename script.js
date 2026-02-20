@@ -30,6 +30,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const backToMenuBtn = document.getElementById('back-to-menu');
     const logoTitle = document.getElementById('logo-title');
 
+    // --- Global Fiscal Year Selector ---
+    const globalFiscalYearSelect = document.getElementById('global-fiscal-year');
+    (function initGlobalFiscalYear() {
+        const saved = localStorage.getItem('hinakira_fiscal_year');
+        const defaultYear = saved ? parseInt(saved) : thisYear;
+        for (let y = thisYear + 1; y >= thisYear - 5; y--) {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y + '年';
+            if (y === defaultYear) opt.selected = true;
+            globalFiscalYearSelect.appendChild(opt);
+        }
+    })();
+
+    function getSelectedFiscalYear() {
+        return parseInt(globalFiscalYearSelect.value) || thisYear;
+    }
+
+    globalFiscalYearSelect.addEventListener('change', () => {
+        localStorage.setItem('hinakira_fiscal_year', globalFiscalYearSelect.value);
+    });
+
     // ============================================================
     //  Section 3: Google OAuth
     // ============================================================
@@ -419,37 +441,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const jeMemo = document.getElementById('je-memo');
     const jeTaxRate = document.getElementById('je-tax-rate');
     const jeAiBtn = document.getElementById('je-ai-btn');
-    const jeFiscalYear = document.getElementById('je-fiscal-year');
-
-    // --- Fiscal year selector ---
-    (function initFiscalYearSelector() {
-        const currentYear = new Date().getFullYear();
-        for (let y = currentYear + 1; y >= currentYear - 5; y--) {
-            const opt = document.createElement('option');
-            opt.value = y;
-            opt.textContent = y + '年';
-            if (y === currentYear) opt.selected = true;
-            jeFiscalYear.appendChild(opt);
-        }
-    })();
-
-    function getSelectedFiscalYear() {
-        return parseInt(jeFiscalYear.value) || new Date().getFullYear();
-    }
 
     function applyFiscalYearConstraint() {
         const fy = getSelectedFiscalYear();
         jeDate.min = `${fy}-01-01`;
         jeDate.max = `${fy}-12-31`;
-        // If current date value is outside new range, adjust it
         if (jeDate.value < jeDate.min) jeDate.value = jeDate.min;
         if (jeDate.value > jeDate.max) jeDate.value = jeDate.max;
     }
-
-    jeFiscalYear.addEventListener('change', () => {
-        applyFiscalYearConstraint();
-        loadRecentEntries();
-    });
 
     // Default date to today
     jeDate.value = todayStr();
