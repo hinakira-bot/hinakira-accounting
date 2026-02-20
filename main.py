@@ -702,6 +702,20 @@ def api_journal_delete(entry_id):
         return jsonify({"error": "Delete failed"}), 400
 
 
+@app.route('/api/journal/bulk-delete', methods=['POST'])
+def api_journal_bulk_delete():
+    """Bulk soft-delete journal entries."""
+    uid = get_user_id()
+    data = request.json
+    if not data or not data.get('ids'):
+        return jsonify({"error": "No IDs provided"}), 400
+    ids = data['ids']
+    if not isinstance(ids, list) or len(ids) == 0:
+        return jsonify({"error": "Invalid IDs"}), 400
+    count = models.bulk_delete_journal_entries(ids, user_id=uid)
+    return jsonify({"status": "success", "deleted": count})
+
+
 # ============================
 #  Trial Balance API (user-scoped)
 # ============================

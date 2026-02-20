@@ -2418,3 +2418,20 @@ tr.pl-subtotal td { border-top: 1px solid #c7d2fe; color: #1e3a8a; }
     gap: 0.25rem;
     flex-wrap: wrap;
 }
+
+/* Journal book bulk delete */
+#jb-table .jb-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+#jb-select-all {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+#jb-bulk-delete-btn {
+    white-space: nowrap;
+}

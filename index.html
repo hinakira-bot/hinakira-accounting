@@ -266,7 +266,10 @@
                             <select class="period-select" id="jb-month-select"></select>
                             <button class="period-arrow" id="jb-period-next" title="次へ">▶</button>
                         </div>
-                        <button id="jb-advanced-btn" class="btn btn-sm btn-ghost">詳細検索</button>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <button id="jb-bulk-delete-btn" class="btn btn-sm btn-danger hidden" title="選択した仕訳を一括削除">一括削除</button>
+                            <button id="jb-advanced-btn" class="btn btn-sm btn-ghost">詳細検索</button>
+                        </div>
                     </div>
                     <div class="period-range-display" id="jb-period-range"></div>
                     <div id="jb-active-filters" class="active-filters hidden"></div>
@@ -319,7 +322,7 @@
                     <div class="table-wrap">
                         <table id="jb-table">
                             <thead>
-                                <tr><th>日付</th><th>借方 <button type="button" class="help-btn" data-help="お金を使った目的（費用）や、増えた資産の科目です。例：消耗品費、旅費交通費、普通預金など。">?</button></th><th>貸方 <button type="button" class="help-btn" data-help="支払い方法や、減った資産の科目です。例：未払金（クレカ）、普通預金（振込）、現金など。">?</button></th><th class="text-right">金額</th><th>税区分 <button type="button" class="help-btn" data-help="10%＝標準税率、8%＝軽減税率（食品・テイクアウト）、非課税＝保険料・給与、不課税＝預金移動・事業主貸借。">?</button></th><th>取引先</th><th>摘要 <button type="button" class="help-btn" data-help="取引の内容メモです。何を買ったか、何の支払いかを簡潔に記入します。">?</button></th><th>証憑 <button type="button" class="help-btn" data-help="レシートや請求書など、取引の証拠となる書類です。📎マークから確認できます。">?</button></th><th style="width:80px;"></th></tr>
+                                <tr><th style="width:32px;"><input type="checkbox" id="jb-select-all" title="すべて選択"></th><th>日付</th><th>借方 <button type="button" class="help-btn" data-help="お金を使った目的（費用）や、増えた資産の科目です。例：消耗品費、旅費交通費、普通預金など。">?</button></th><th>貸方 <button type="button" class="help-btn" data-help="支払い方法や、減った資産の科目です。例：未払金（クレカ）、普通預金（振込）、現金など。">?</button></th><th class="text-right">金額</th><th>税区分 <button type="button" class="help-btn" data-help="10%＝標準税率、8%＝軽減税率（食品・テイクアウト）、非課税＝保険料・給与、不課税＝預金移動・事業主貸借。">?</button></th><th>取引先</th><th>摘要 <button type="button" class="help-btn" data-help="取引の内容メモです。何を買ったか、何の支払いかを簡潔に記入します。">?</button></th><th>証憑 <button type="button" class="help-btn" data-help="レシートや請求書など、取引の証拠となる書類です。📎マークから確認できます。">?</button></th><th style="width:80px;"></th></tr>
                             </thead>
                             <tbody id="jb-tbody"></tbody>
                         </table>

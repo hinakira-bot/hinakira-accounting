@@ -182,17 +182,6 @@ def create_journal_entry(entry: dict, user_id: int = 0) -> int:
 
         entry_date = entry.get('entry_date', entry.get('date', ''))
         memo = entry.get('memo', '')
-        import datetime
-        current_year = datetime.date.today().year
-        if entry_date:
-            try:
-                parsed_date = datetime.date.fromisoformat(entry_date)
-                if parsed_date.year < current_year:
-                    original_date = entry_date
-                    entry_date = f"{current_year}-01-01"
-                    memo = f"[実際日付:{original_date}] {memo}".strip()
-            except (ValueError, TypeError):
-                pass
 
         _params = (
                 user_id,
@@ -411,6 +400,26 @@ def delete_journal_entry(entry_id: int, user_id: int = 0) -> bool:
         conn.rollback()
         print(f"Delete error: {e}")
         return False
+    finally:
+        conn.close()
+
+
+def bulk_delete_journal_entries(entry_ids: list, user_id: int = 0) -> int:
+    """Soft-delete multiple journal entries at once (user-scoped). Returns count of deleted."""
+    if not entry_ids:
+        return 0
+    conn = get_db()
+    try:
+        placeholders = ','.join(['?'] * len(entry_ids))
+        sql = P(f"UPDATE journal_entries SET is_deleted = 1, updated_at = {_NOW} WHERE id IN ({placeholders}) AND user_id = ?")
+        params = list(entry_ids) + [user_id]
+        cur = conn.execute(sql, params)
+        conn.commit()
+        return cur.rowcount
+    except Exception as e:
+        conn.rollback()
+        print(f"Bulk delete error: {e}")
+        return 0
     finally:
         conn.close()
 

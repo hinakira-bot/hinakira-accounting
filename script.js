@@ -1406,11 +1406,58 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let jbEntriesCache = [];
 
+    const jbSelectAll = document.getElementById('jb-select-all');
+    const jbBulkDeleteBtn = document.getElementById('jb-bulk-delete-btn');
+
+    function updateBulkDeleteBtn() {
+        const checked = jbTbody.querySelectorAll('.jb-checkbox:checked');
+        if (checked.length > 0) {
+            jbBulkDeleteBtn.classList.remove('hidden');
+            jbBulkDeleteBtn.textContent = `一括削除 (${checked.length}件)`;
+        } else {
+            jbBulkDeleteBtn.classList.add('hidden');
+        }
+    }
+
+    jbSelectAll.addEventListener('change', () => {
+        const checked = jbSelectAll.checked;
+        jbTbody.querySelectorAll('.jb-checkbox').forEach(cb => { cb.checked = checked; });
+        updateBulkDeleteBtn();
+    });
+
+    jbBulkDeleteBtn.addEventListener('click', async () => {
+        const checkedBoxes = jbTbody.querySelectorAll('.jb-checkbox:checked');
+        const ids = Array.from(checkedBoxes).map(cb => parseInt(cb.dataset.id));
+        if (!ids.length) return;
+        if (!confirm(`${ids.length}件の仕訳を削除しますか？この操作は元に戻せません。`)) return;
+        try {
+            jbBulkDeleteBtn.disabled = true;
+            jbBulkDeleteBtn.textContent = '削除中...';
+            const res = await fetchAPI('/api/journal/bulk-delete', 'POST', { ids });
+            if (res.status === 'success') {
+                showToast(`${res.deleted}件の仕訳を削除しました`);
+                jbSelectAll.checked = false;
+                loadJournalBook();
+                loadRecentEntries();
+            } else {
+                showToast('削除に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        } finally {
+            jbBulkDeleteBtn.disabled = false;
+            updateBulkDeleteBtn();
+        }
+    });
+
     function renderJournalBook(data) {
         const entries = data.entries || [];
         jbEntriesCache = entries;
+        jbSelectAll.checked = false;
+        jbBulkDeleteBtn.classList.add('hidden');
         jbTbody.innerHTML = entries.map(e => `
             <tr data-id="${e.id}" style="cursor:pointer;">
+                <td><input type="checkbox" class="jb-checkbox" data-id="${e.id}"></td>
                 <td>${e.entry_date || ''}</td>
                 <td>${e.debit_account || ''}</td>
                 <td>${e.credit_account || ''}</td>
@@ -1427,7 +1474,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `).join('');
 
         if (!entries.length) {
-            jbTbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:2rem;">仕訳データがありません</td></tr>';
+            jbTbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-dim);padding:2rem;">仕訳データがありません</td></tr>';
         }
 
         const total = data.total || 0;
@@ -1439,6 +1486,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (jbPage < totalPages) pgHtml += `<button class="btn btn-sm btn-ghost jb-page" data-p="${jbPage + 1}">次 →</button>`;
         }
         jbPagination.innerHTML = pgHtml;
+
+        // Checkbox change handlers
+        jbTbody.querySelectorAll('.jb-checkbox').forEach(cb => {
+            cb.addEventListener('change', () => {
+                updateBulkDeleteBtn();
+                // Update select-all state
+                const allBoxes = jbTbody.querySelectorAll('.jb-checkbox');
+                const allChecked = jbTbody.querySelectorAll('.jb-checkbox:checked');
+                jbSelectAll.checked = allBoxes.length > 0 && allBoxes.length === allChecked.length;
+                jbSelectAll.indeterminate = allChecked.length > 0 && allChecked.length < allBoxes.length;
+            });
+        });
 
         jbTbody.querySelectorAll('.jb-delete').forEach(btn => {
             btn.addEventListener('click', async (e) => {
@@ -1470,7 +1529,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Double-click to open detail modal
         jbTbody.querySelectorAll('tr[data-id]').forEach(row => {
             row.addEventListener('dblclick', (e) => {
-                if (e.target.closest('a') || e.target.closest('button')) return;
+                if (e.target.closest('a') || e.target.closest('button') || e.target.closest('input[type=checkbox]')) return;
                 const id = row.dataset.id;
                 const entry = jbEntriesCache.find(en => String(en.id) === String(id));
                 if (entry) openJEDetailModal(entry, () => { loadJournalBook(); loadRecentEntries(); });
