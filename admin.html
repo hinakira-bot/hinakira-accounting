@@ -26,10 +26,13 @@
         .license-table th, .license-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
         .license-table th { background: var(--bg); font-weight: 600; position: sticky; top: 0; }
         .status-unused { color: var(--text-dim); }
+        .status-copied { color: #e67e22; font-weight: 600; }
         .status-active { color: #28a745; font-weight: 600; }
         .status-revoked { color: #dc3545; text-decoration: line-through; }
         .btn-revoke { padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #dc3545; color: #fff; border: none; border-radius: var(--radius); cursor: pointer; }
         .btn-revoke:hover { background: #c82333; }
+        .btn-unmark { padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #6c757d; color: #fff; border: none; border-radius: var(--radius); cursor: pointer; margin-left: 0.25rem; }
+        .btn-unmark:hover { background: #5a6268; }
         .admin-login { text-align: center; margin-top: 4rem; }
         .admin-login p { color: var(--text-dim); margin-bottom: 1rem; }
         .admin-error { text-align: center; margin-top: 4rem; color: #dc3545; }
@@ -113,6 +116,22 @@
         const appDiv = document.getElementById('admin-app');
         const toastEl = document.getElementById('toast');
 
+        // Track copied (shared) license keys in localStorage
+        function getCopiedKeys() {
+            try { return JSON.parse(localStorage.getItem('hinakira_copied_keys') || '[]'); } catch { return []; }
+        }
+        function markKeyCopied(keyId) {
+            const keys = getCopiedKeys();
+            if (!keys.includes(keyId)) { keys.push(keyId); localStorage.setItem('hinakira_copied_keys', JSON.stringify(keys)); }
+        }
+        function unmarkKeyCopied(keyId) {
+            const keys = getCopiedKeys().filter(k => k !== keyId);
+            localStorage.setItem('hinakira_copied_keys', JSON.stringify(keys));
+        }
+        function isKeyCopied(keyId) {
+            return getCopiedKeys().includes(keyId);
+        }
+
         function showToast(msg) {
             toastEl.textContent = msg;
             toastEl.classList.add('show');
@@ -149,31 +168,75 @@
                 data.forEach(lic => {
                     const tr = document.createElement('tr');
                     let status, statusClass;
+                    const copied = isKeyCopied(lic.id);
                     if (lic.is_revoked) {
                         status = '無効化';
                         statusClass = 'status-revoked';
                     } else if (lic.user_email) {
                         status = '有効';
                         statusClass = 'status-active';
+                    } else if (copied) {
+                        status = 'コピー済み';
+                        statusClass = 'status-copied';
                     } else {
                         status = '未使用';
                         statusClass = 'status-unused';
                     }
+
+                    // Actions column
+                    let actions = '';
+                    if (lic.is_revoked) {
+                        actions = '-';
+                    } else if (lic.user_email) {
+                        actions = '<button class="btn-revoke" data-id="' + lic.id + '">無効化</button>';
+                    } else if (copied) {
+                        actions = '<button class="btn-unmark" data-id="' + lic.id + '">解除</button>'
+                            + '<button class="btn-revoke" data-id="' + lic.id + '">無効化</button>';
+                    } else {
+                        actions = '<button class="btn-revoke" data-id="' + lic.id + '">無効化</button>';
+                    }
+
                     tr.innerHTML = `
-                        <td><span class="gen-key" onclick="navigator.clipboard.writeText('${lic.license_key}').then(()=>this.classList.add('copied'))">${lic.license_key}</span></td>
+                        <td><span class="gen-key copy-key" data-key="${lic.license_key}" data-id="${lic.id}">${lic.license_key}</span></td>
                         <td><span class="${statusClass}">${status}</span></td>
                         <td>${lic.user_email || '-'}</td>
                         <td>${lic.activated_at ? new Date(lic.activated_at).toLocaleDateString('ja-JP') : '-'}</td>
                         <td>${lic.notes || '-'}</td>
-                        <td>${!lic.is_revoked ? '<button class="btn-revoke" data-id="' + lic.id + '">無効化</button>' : '-'}</td>
+                        <td>${actions}</td>
                     `;
                     tbody.appendChild(tr);
                 });
+
+                // Copy key handlers — mark as copied
+                tbody.querySelectorAll('.copy-key').forEach(span => {
+                    span.addEventListener('click', () => {
+                        const key = span.dataset.key;
+                        const keyId = parseInt(span.dataset.id);
+                        navigator.clipboard.writeText(key).then(() => {
+                            span.classList.add('copied');
+                            markKeyCopied(keyId);
+                            showToast('コピーしました: ' + key);
+                            loadLicenses(); // Refresh to show "コピー済み"
+                        });
+                    });
+                });
+
+                // Unmark (解除) handlers
+                tbody.querySelectorAll('.btn-unmark').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        unmarkKeyCopied(parseInt(btn.dataset.id));
+                        showToast('コピー済みを解除しました');
+                        loadLicenses();
+                    });
+                });
+
                 // Revoke handlers
                 tbody.querySelectorAll('.btn-revoke').forEach(btn => {
                     btn.addEventListener('click', async () => {
                         if (!confirm('このライセンスを無効化しますか？')) return;
-                        await fetchAdmin('/api/admin/licenses/revoke', 'POST', { license_key_id: parseInt(btn.dataset.id) });
+                        const keyId = parseInt(btn.dataset.id);
+                        await fetchAdmin('/api/admin/licenses/revoke', 'POST', { license_key_id: keyId });
+                        unmarkKeyCopied(keyId); // Also clear copied state
                         showToast('ライセンスを無効化しました');
                         loadLicenses();
                     });
@@ -253,8 +316,9 @@
                         span.onclick = () => {
                             navigator.clipboard.writeText(r.license_key).then(() => {
                                 span.classList.add('copied');
+                                if (r.id) markKeyCopied(r.id);
                                 showToast('コピーしました: ' + r.license_key);
-                                setTimeout(() => span.classList.remove('copied'), 1500);
+                                loadLicenses(); // Refresh list to show "コピー済み"
                             });
                         };
                         div.appendChild(span);
