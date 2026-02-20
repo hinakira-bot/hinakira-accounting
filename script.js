@@ -279,13 +279,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    const headerFiscalYear = document.getElementById('header-fiscal-year');
+
+    function updateHeaderFiscalYear() {
+        const fy = getSelectedFiscalYear();
+        headerFiscalYear.textContent = `${fy}年度`;
+    }
+
     function showMenu() {
         // Hide all content views
         document.querySelectorAll('.content-view').forEach(v => v.classList.remove('active'));
         // Show menu grid
         menuGrid.classList.add('active');
-        // Hide back button, show logo
+        // Hide back button, show logo, hide fiscal year badge
         backToMenuBtn.classList.add('hidden');
+        headerFiscalYear.classList.add('hidden');
         logoTitle.classList.remove('hidden');
         location.hash = 'menu';
     }
@@ -300,8 +308,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (target) {
             target.classList.add('active');
         }
-        // Show back button, hide logo
+        // Show back button, hide logo, show fiscal year badge
         backToMenuBtn.classList.remove('hidden');
+        headerFiscalYear.classList.remove('hidden');
+        updateHeaderFiscalYear();
         logoTitle.classList.add('hidden');
         // Update hash
         location.hash = viewId;
@@ -975,19 +985,29 @@ document.addEventListener('DOMContentLoaded', () => {
     function isPriorYear(dateStr) {
         if (!dateStr) return false;
         const y = parseInt(dateStr.substring(0, 4));
-        return y < currentYear;
+        const fy = getSelectedFiscalYear();
+        return y < fy;
+    }
+
+    function isOutsideFiscalYear(dateStr) {
+        if (!dateStr) return false;
+        const y = parseInt(dateStr.substring(0, 4));
+        const fy = getSelectedFiscalYear();
+        return y !== fy;
     }
 
     function renderScanResults() {
         let hasDup = false;
         let hasPriorYear = false;
+        const fy = getSelectedFiscalYear();
         scanTbody.innerHTML = scanResults.map((item, i) => {
             if (item.is_duplicate) hasDup = true;
             const priorYear = isPriorYear(item.date);
+            const outsideFY = isOutsideFiscalYear(item.date);
             if (priorYear) hasPriorYear = true;
             return `
-            <tr class="${item.is_duplicate ? 'row-duplicate' : ''} ${priorYear ? 'row-prior-year' : ''}">
-                <td><input type="date" value="${item.date || ''}" data-i="${i}" data-k="date" class="scan-input ${priorYear ? 'input-prior-year' : ''}"></td>
+            <tr class="${item.is_duplicate ? 'row-duplicate' : ''} ${outsideFY ? 'row-prior-year' : ''}">
+                <td><input type="date" value="${item.date || ''}" min="${fy}-01-01" max="${fy}-12-31" data-i="${i}" data-k="date" class="scan-input ${outsideFY ? 'input-prior-year' : ''}"></td>
                 <td><input type="text" value="${item.debit_account || ''}" list="account-list" data-i="${i}" data-k="debit_account" class="scan-input"></td>
                 <td><input type="text" value="${item.credit_account || ''}" list="account-list" data-i="${i}" data-k="credit_account" class="scan-input"></td>
                 <td><input type="number" value="${item.amount || 0}" data-i="${i}" data-k="amount" class="scan-input" style="width:100px;"></td>
@@ -1035,6 +1055,16 @@ document.addEventListener('DOMContentLoaded', () => {
     scanSaveBtn.addEventListener('click', async () => {
         const valid = scanResults.filter(r => parseInt(r.amount) > 0);
         if (!valid.length) { showToast('保存するデータがありません', true); return; }
+
+        // Check for entries outside fiscal year
+        const fy = getSelectedFiscalYear();
+        const outsideEntries = valid.filter(r => isOutsideFiscalYear(r.date));
+        if (outsideEntries.length > 0) {
+            if (!confirm(`${outsideEntries.length}件の仕訳が${fy}年度の範囲外です。\n範囲外の仕訳は${fy}年1月1日に変更して登録します。よろしいですか？`)) {
+                return;
+            }
+            outsideEntries.forEach(r => { r.date = `${fy}-01-01`; });
+        }
 
         // Determine source: csv_import for statement-parsed entries, ai_receipt for others
         const hasCsvEntries = valid.some(r => r.source === 'csv_import');
@@ -4635,6 +4665,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applyFiscalYearConstraint(); // Update journal input date range
         applyFiscalYearToOutput();   // Update output date range
         applyFiscalYearToTaxInputs(); // Update tax date range
+        updateHeaderFiscalYear();    // Update header fiscal year badge
     });
 
     // ============================================================

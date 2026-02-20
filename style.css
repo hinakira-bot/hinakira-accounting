@@ -96,6 +96,20 @@ body {
 .btn-back:hover { background: var(--bg); color: var(--text); border-color: var(--text-dim); }
 .btn-back svg { flex-shrink: 0; }
 
+/* Header Fiscal Year Badge */
+.header-fiscal-year {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.625rem;
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+    margin-left: 0.5rem;
+}
+
 /* Main */
 .app-main {
     flex: 1;
