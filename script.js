@@ -742,6 +742,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const scanAddInput = document.getElementById('scan-add-input');
     const scanDupAlert = document.getElementById('scan-duplicate-alert');
     const scanClearAll = document.getElementById('scan-clear-all');
+    const scanAiBulk = document.getElementById('scan-ai-bulk');
 
     // Clear all scanned results
     scanClearAll.addEventListener('click', () => {
@@ -751,6 +752,54 @@ document.addEventListener('DOMContentLoaded', () => {
         scanTbody.innerHTML = '';
         scanResultsCard.classList.add('hidden');
         showToast('解析結果をすべて削除しました');
+    });
+
+    // AI bulk re-predict: re-judge accounts and tax for all scan results
+    scanAiBulk.addEventListener('click', async () => {
+        if (!scanResults.length) { showToast('判定するデータがありません', true); return; }
+        const apiKey = localStorage.getItem('gemini_api_key');
+        if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
+
+        const predData = scanResults.map((r, i) => ({
+            index: i,
+            counterparty: r.counterparty || '',
+            memo: r.memo || '',
+            amount: r.amount || 0,
+            debit: '',   // 空にして全て再判定
+            credit: '',
+        }));
+
+        scanAiBulk.disabled = true;
+        scanAiBulk.textContent = 'AI判定中...';
+
+        try {
+            const predictions = await fetchAPI('/api/predict', 'POST', {
+                data: predData,
+                gemini_api_key: apiKey,
+            });
+
+            if (predictions.error) throw new Error(predictions.error);
+            if (Array.isArray(predictions)) {
+                for (let i = 0; i < predictions.length && i < scanResults.length; i++) {
+                    const pred = predictions[i];
+                    if (pred.debit) scanResults[i].debit_account = pred.debit;
+                    if (pred.credit) scanResults[i].credit_account = pred.credit;
+                    // inferTaxClassification で消費税を連動
+                    const newTax = inferTaxClassification(
+                        scanResults[i].debit_account,
+                        scanResults[i].credit_account
+                    );
+                    if (newTax) scanResults[i].tax_classification = newTax;
+                }
+                renderScanResults();
+                showToast(`${predictions.length}件のAI判定が完了しました`);
+            }
+        } catch (err) {
+            showToast('AI判定エラー: ' + err.message, true);
+        } finally {
+            scanAiBulk.disabled = false;
+            scanAiBulk.textContent = 'AI一括判定';
+        }
     });
 
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
