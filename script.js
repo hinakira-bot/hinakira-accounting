@@ -1225,12 +1225,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const JB_PER_PAGE = 20;
     let jbCurrentPeriodMode = 'month';
 
-    // Populate year/month selects
-    for (let y = thisYear - 3; y <= thisYear + 1; y++) {
-        const opt = document.createElement('option');
-        opt.value = y; opt.textContent = y + '年';
-        if (y === thisYear) opt.selected = true;
-        jbYearSelect.appendChild(opt);
+    // Populate year/month selects (default to global fiscal year)
+    {
+        const fy = getSelectedFiscalYear();
+        for (let y = thisYear + 1; y >= thisYear - 5; y--) {
+            const opt = document.createElement('option');
+            opt.value = y; opt.textContent = y + '年';
+            if (y === fy) opt.selected = true;
+            jbYearSelect.appendChild(opt);
+        }
     }
     for (let m = 1; m <= 12; m++) {
         const opt = document.createElement('option');
@@ -1240,7 +1243,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function applyJBPeriod() {
-        const y = parseInt(jbYearSelect.value) || thisYear;
+        const y = parseInt(jbYearSelect.value) || getSelectedFiscalYear();
         const m = parseInt(jbMonthSelect.value) || thisMonth;
         const now = new Date();
         switch (jbCurrentPeriodMode) {
@@ -1563,13 +1566,16 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentLedgerSubTab = 'bs-assets';
     let currentPeriodMode = 'month';  // 'ytd' | 'year' | 'month'
 
-    // --- Year & Month selector population ---
-    for (let y = thisYear - 3; y <= thisYear + 1; y++) {
-        const opt = document.createElement('option');
-        opt.value = y;
-        opt.textContent = y + '年';
-        if (y === thisYear) opt.selected = true;
-        ledgerYearSelect.appendChild(opt);
+    // --- Year & Month selector population (default to global fiscal year) ---
+    {
+        const fy = getSelectedFiscalYear();
+        for (let y = thisYear + 1; y >= thisYear - 5; y--) {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y + '年';
+            if (y === fy) opt.selected = true;
+            ledgerYearSelect.appendChild(opt);
+        }
     }
     for (let m = 1; m <= 12; m++) {
         const opt = document.createElement('option');
@@ -1579,7 +1585,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ledgerMonthSelect.appendChild(opt);
     }
 
-    function getSelectedYear() { return parseInt(ledgerYearSelect.value) || thisYear; }
+    function getSelectedYear() { return parseInt(ledgerYearSelect.value) || getSelectedFiscalYear(); }
     function getSelectedMonth() { return parseInt(ledgerMonthSelect.value) || thisMonth; }
 
     function isMonthlyMode() { return currentPeriodMode === 'month'; }
