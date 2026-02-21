@@ -60,14 +60,14 @@ FORMAT_REGISTRY = [
     {
         'name': 'ゆうちょ銀行',
         'type': 'bank',
-        'keywords': ['取扱日', '預入金額', '払出金額'],
+        'keywords': ['取引日', '受入金額', '払出金額', '詳細'],
         'date_col': 0,
-        'description_col': 1,
-        'detail_col': 6,  # 詳細2列（取引先名）
-        'deposit_col': 2,
-        'withdrawal_col': 3,
-        'balance_col': 4,
-        'skip_rows': 1,
+        'description_col': 4,  # 詳細１（取引種別: カード/振込/利子等）
+        'detail_col': 5,       # 詳細２（取引先名・半角カナ）
+        'deposit_col': 2,      # 受入金額
+        'withdrawal_col': 3,   # 払出金額
+        'balance_col': 6,      # 現在（貸付）高
+        'skip_rows': 8,        # 行1-7: 情報ヘッダー, 行8: データヘッダー
         'date_formats': ['%Y%m%d', '%Y/%m/%d'],
         'default_debit': '普通預金',
         'default_credit': '普通預金',
@@ -404,7 +404,9 @@ def build_journal_candidates(
     Card purchases:   debit=TBD(expense), credit=未払金
     """
     # 銀行固有取引のキーワード（取引先が銀行自体の場合）
-    BANK_SELF_KEYWORDS = ['利息', '利子', '手数料', '税金', '源泉', '記帳']
+    BANK_SELF_KEYWORDS = ['利息', '利子', '受取利子', '手数料', '料\u3000金', '料 金', '税金', '源泉', '記帳']
+    # 口座種別（取引先名ではないので除外）
+    ACCOUNT_TYPE_WORDS = ['普通預金', '通常貯金', '当座預金', '貯蓄預金', '定期預金', '普通貯金', '通常貯蓄']
 
     entries = []
 
@@ -412,16 +414,19 @@ def build_journal_candidates(
         detail = row.get('detail', '')
         description = row['description']
 
-        # 詳細列（ゆうちょ銀行等）がある場合は取引先名として使用
-        if detail:
-            counterparty = detail
-            memo = f"{description} {detail}".strip()
+        # 詳細列が口座種別の場合は取引先名として使わない
+        effective_detail = detail if detail and detail not in ACCOUNT_TYPE_WORDS else ''
+
+        # 詳細列に有効な取引先名がある場合は使用（ゆうちょ等）
+        if effective_detail:
+            counterparty = effective_detail
+            memo = f"{description} {effective_detail}".strip()
         else:
             counterparty = _extract_counterparty(description)
             memo = description if description != counterparty else ''
 
-        # 預金明細で「カード」かつ詳細空 → ATM引出/預入
-        if source_type == 'bank' and description in ('カード', 'ｶｰﾄﾞ') and not detail:
+        # 預金明細で「カード」かつ取引先空 → ATM引出/預入
+        if source_type == 'bank' and description in ('カード', 'ｶｰﾄﾞ') and not effective_detail:
             counterparty = source_name  # 例: 'ゆうちょ銀行'
             if row['direction'] == 'withdrawal':
                 memo = '預金引出'
@@ -429,10 +434,11 @@ def build_journal_candidates(
                 memo = '預金預入'
 
         # 預金明細で銀行固有キーワードに該当 → 取引先を銀行名に設定
-        if source_type == 'bank' and description:
-            if any(kw in description for kw in BANK_SELF_KEYWORDS):
-                counterparty = source_name  # 例: 'みずほ銀行'
-                memo = description   # 説明文をmemoに保存
+        if source_type == 'bank':
+            combined = f"{description} {detail}".strip()
+            if any(kw in combined for kw in BANK_SELF_KEYWORDS):
+                counterparty = source_name  # 例: 'ゆうちょ銀行'
+                memo = description   # 取引種別をmemoに保存
 
         if source_type == 'card':
             # Credit card: all are expenses
