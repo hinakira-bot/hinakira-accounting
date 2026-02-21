@@ -397,11 +397,20 @@ def build_journal_candidates(
     Bank deposits:    debit=普通預金, credit=TBD(revenue)
     Card purchases:   debit=TBD(expense), credit=未払金
     """
+    # 銀行固有取引のキーワード（取引先が銀行自体の場合）
+    BANK_SELF_KEYWORDS = ['利息', '利子', '手数料', '税金', '源泉', '記帳']
+
     entries = []
 
     for row in parsed_rows:
         counterparty = _extract_counterparty(row['description'])
         memo = row['description'] if row['description'] != counterparty else ''
+
+        # 預金明細で銀行固有キーワードに該当 → 取引先を銀行名に設定
+        if source_type == 'bank' and row['description']:
+            if any(kw in row['description'] for kw in BANK_SELF_KEYWORDS):
+                counterparty = source_name  # 例: 'みずほ銀行'
+                memo = row['description']   # 説明文をmemoに保存
 
         if source_type == 'card':
             # Credit card: all are expenses
