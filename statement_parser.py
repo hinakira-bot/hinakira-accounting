@@ -63,6 +63,7 @@ FORMAT_REGISTRY = [
         'keywords': ['取扱日', '預入金額', '払出金額'],
         'date_col': 0,
         'description_col': 1,
+        'detail_col': 6,  # 詳細2列（取引先名）
         'deposit_col': 2,
         'withdrawal_col': 3,
         'balance_col': 4,
@@ -370,9 +371,14 @@ def parse_statement(csv_text: str, fmt: dict) -> list:
         bal_col = fmt.get('balance_col')
         balance = _clean_amount(row[bal_col] if bal_col is not None and bal_col < len(row) else '') if bal_col else None
 
+        # Extract detail column (e.g. ゆうちょ銀行の詳細2 = 取引先名)
+        detail_col = fmt.get('detail_col')
+        detail = row[detail_col].strip() if detail_col is not None and detail_col < len(row) else ''
+
         results.append({
             'date': entry_date,
             'description': description,
+            'detail': detail,
             'amount': amount,
             'direction': direction,
             'balance': balance,
@@ -403,14 +409,30 @@ def build_journal_candidates(
     entries = []
 
     for row in parsed_rows:
-        counterparty = _extract_counterparty(row['description'])
-        memo = row['description'] if row['description'] != counterparty else ''
+        detail = row.get('detail', '')
+        description = row['description']
+
+        # 詳細列（ゆうちょ銀行等）がある場合は取引先名として使用
+        if detail:
+            counterparty = detail
+            memo = f"{description} {detail}".strip()
+        else:
+            counterparty = _extract_counterparty(description)
+            memo = description if description != counterparty else ''
+
+        # 預金明細で「カード」かつ詳細空 → ATM引出/預入
+        if source_type == 'bank' and description in ('カード', 'ｶｰﾄﾞ') and not detail:
+            counterparty = source_name  # 例: 'ゆうちょ銀行'
+            if row['direction'] == 'withdrawal':
+                memo = '預金引出'
+            else:
+                memo = '預金預入'
 
         # 預金明細で銀行固有キーワードに該当 → 取引先を銀行名に設定
-        if source_type == 'bank' and row['description']:
-            if any(kw in row['description'] for kw in BANK_SELF_KEYWORDS):
+        if source_type == 'bank' and description:
+            if any(kw in description for kw in BANK_SELF_KEYWORDS):
                 counterparty = source_name  # 例: 'みずほ銀行'
-                memo = row['description']   # 説明文をmemoに保存
+                memo = description   # 説明文をmemoに保存
 
         if source_type == 'card':
             # Credit card: all are expenses
