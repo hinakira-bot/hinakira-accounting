@@ -941,15 +941,32 @@ def get_counterparty_account_mapping(user_id: int = 0) -> list:
         conn.close()
 
 
+def _normalize_counterparty(name: str) -> str:
+    """取引先名を正規化（重複検出の精度向上）。
+    大文字統一、ドット/スペース/法人格を除去して表記揺れを吸収する。"""
+    import re
+    if not name:
+        return ''
+    s = name.strip()
+    s = s.upper()
+    s = s.replace('　', ' ')
+    s = re.sub(r'[.．・]', '', s)
+    s = re.sub(r'\s+', '', s)
+    s = re.sub(r'(株式会社|有限会社|（株）|㈱|\(株\))', '', s)
+    s = s.replace('ー', '-')
+    return s
+
+
 def get_existing_entry_keys(user_id: int = 0) -> set:
-    """Get set of 'date_amount_counterparty' keys for duplicate detection (user-scoped)."""
+    """Get set of 'date_amount_counterparty' keys for duplicate detection (user-scoped).
+    Counterparty names are normalized to absorb formatting variations."""
     conn = get_db()
     try:
         rows = conn.execute(
             P("SELECT entry_date, amount, counterparty FROM journal_entries WHERE is_deleted = 0 AND user_id = ?"),
             (user_id,)
         ).fetchall()
-        return {f"{r['entry_date']}_{r['amount']}_{r['counterparty']}" for r in rows}
+        return {f"{r['entry_date']}_{str(r['amount'])}_{_normalize_counterparty(r['counterparty'])}" for r in rows}
     finally:
         conn.close()
 

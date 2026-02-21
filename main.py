@@ -493,7 +493,7 @@ def api_drive_inbox_analyze():
                 item['evidence_url'] = web_link
                 item['drive_file_id'] = fid
                 item['evidence_category'] = category
-                key = f"{item.get('date')}_{str(item.get('amount'))}_{item.get('counterparty')}"
+                key = f"{item.get('date')}_{str(item.get('amount'))}_{models._normalize_counterparty(item.get('counterparty', ''))}"
                 item['is_duplicate'] = key in existing
             results.extend(res)
 
@@ -772,7 +772,7 @@ def api_statement_parse():
         # Duplicate detection against existing journal entries
         existing = models.get_existing_entry_keys(user_id=uid)
         for entry in result['entries']:
-            key = f"{entry.get('date')}_{entry.get('amount')}_{entry.get('counterparty')}"
+            key = f"{entry.get('date')}_{str(entry.get('amount'))}_{models._normalize_counterparty(entry.get('counterparty', ''))}"
             entry['is_duplicate'] = key in existing
 
         result['filename'] = filename
@@ -873,7 +873,7 @@ def api_analyze():
         for item in res:
             item['evidence_url'] = ev_url
             item['evidence_category'] = category
-            key = f"{item.get('date')}_{str(item.get('amount'))}_{item.get('counterparty')}"
+            key = f"{item.get('date')}_{str(item.get('amount'))}_{models._normalize_counterparty(item.get('counterparty', ''))}"
             item['is_duplicate'] = key in existing
         results.extend(res)
 
