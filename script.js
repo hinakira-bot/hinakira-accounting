@@ -1270,16 +1270,30 @@ document.addEventListener('DOMContentLoaded', () => {
         // Check for entries outside fiscal year
         const fy = getSelectedFiscalYear();
         const outsideEntries = valid.filter(r => isOutsideFiscalYear(r.date));
+        let entriesToSave = valid;
         if (outsideEntries.length > 0) {
-            if (!confirm(`${outsideEntries.length}件の仕訳が${fy}年度の範囲外です。\n範囲外の仕訳は${fy}年1月1日に変更して登録します。よろしいですか？`)) {
-                return;
+            const insideCount = valid.length - outsideEntries.length;
+            if (!confirm(`${outsideEntries.length}件の仕訳が${fy}年度の範囲外です。\n範囲外の仕訳は${fy}年1月1日に変更して登録します。よろしいですか？\n（キャンセルを押すと範囲外の${outsideEntries.length}件のみスキップし、残り${insideCount}件を登録します）`)) {
+                // キャンセル → 年度外の仕訳だけ除外、年度内は登録続行
+                entriesToSave = valid.filter(r => !isOutsideFiscalYear(r.date));
+                if (!entriesToSave.length) {
+                    showToast('登録対象の仕訳がありません', true);
+                    return;
+                }
+                showToast(`年度外の${outsideEntries.length}件をスキップし、${entriesToSave.length}件を登録します`);
+            } else {
+                // OK → 年度外の仕訳の日付を変換＋摘要に元日付を記録
+                outsideEntries.forEach(r => {
+                    const originalDate = r.date;
+                    r.memo = r.memo ? `[実際の日付: ${originalDate}] ${r.memo}` : `[実際の日付: ${originalDate}]`;
+                    r.date = `${fy}-01-01`;
+                });
             }
-            outsideEntries.forEach(r => { r.date = `${fy}-01-01`; });
         }
 
         // Determine source: csv_import for statement-parsed entries, ai_receipt for others
-        const hasCsvEntries = valid.some(r => r.source === 'csv_import');
-        const entries = valid.map(r => ({
+        const hasCsvEntries = entriesToSave.some(r => r.source === 'csv_import');
+        const entries = entriesToSave.map(r => ({
             entry_date: r.date,
             debit_account: r.debit_account,
             credit_account: r.credit_account,
@@ -1299,13 +1313,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 showToast(`${res.created}件の仕訳を登録しました`);
                 // Record import history for CSV statement imports
                 if (hasCsvEntries && lastStatementParse) {
-                    const dates = valid.filter(r => r.source === 'csv_import' && r.date).map(r => r.date).sort();
+                    const dates = entriesToSave.filter(r => r.source === 'csv_import' && r.date).map(r => r.date).sort();
                     fetchAPI('/api/statement/history', 'POST', {
                         filename: lastStatementParse.filename || '',
                         file_hash: lastStatementParse.file_hash || '',
                         source_name: lastStatementParse.source_name || '',
                         row_count: lastStatementParse.total_rows || 0,
-                        imported_count: valid.filter(r => r.source === 'csv_import').length,
+                        imported_count: entriesToSave.filter(r => r.source === 'csv_import').length,
                         date_range_start: dates[0] || '',
                         date_range_end: dates[dates.length - 1] || '',
                     }).catch(() => {});

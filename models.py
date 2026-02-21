@@ -682,6 +682,28 @@ def get_ledger_entries(account_id: int, start_date=None, end_date=None, user_id:
         ).fetchone()
         opening = ob_row['amount'] if ob_row else 0
 
+        # 月表示時: start_dateより前（年度内）の仕訳を繰越残高に加算
+        if start_date:
+            fy_start = fiscal_year + "-01-01"
+            if start_date > fy_start:
+                cf_cond = "je.is_deleted = 0 AND je.user_id = ? AND je.entry_date < ? AND je.entry_date >= ?"
+                cf_params = [user_id, start_date, fy_start]
+
+                cf_debit = conn.execute(P(
+                    "SELECT COALESCE(SUM(amount), 0) AS total FROM journal_entries je"
+                    " WHERE " + cf_cond + " AND je.debit_account_id = ?"
+                ), cf_params + [account_id]).fetchone()['total']
+
+                cf_credit = conn.execute(P(
+                    "SELECT COALESCE(SUM(amount), 0) AS total FROM journal_entries je"
+                    " WHERE " + cf_cond + " AND je.credit_account_id = ?"
+                ), cf_params + [account_id]).fetchone()['total']
+
+                if atype in ('資産', '費用'):
+                    opening += cf_debit - cf_credit
+                else:
+                    opening += cf_credit - cf_debit
+
         entries = []
         balance = opening
         for r in rows:
