@@ -5,12 +5,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const CLIENT_ID = '353694435064-r6mlbk3mm2mflhl2mot2n94dpuactscc.apps.googleusercontent.com';
     const SCOPES = 'openid email profile https://www.googleapis.com/auth/drive';
     let tokenClient;
-    let accessToken = sessionStorage.getItem('access_token');
-    let tokenExpiration = sessionStorage.getItem('token_expiration');
+    let accessToken = localStorage.getItem('access_token');
+    let tokenExpiration = localStorage.getItem('token_expiration');
     let accounts = [];            // Account master cache
     let scanResults = [];         // Scan tab working data
     let isLoggingOut = false;     // Prevent 401 cascade (multiple toasts)
     let refreshTimer = null;      // Token auto-refresh timer
+    let heartbeatTimer = null;    // Periodic token validity check
     const thisYear = new Date().getFullYear();
     const thisMonth = new Date().getMonth() + 1;
 
@@ -61,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let _refreshRetryCount = 0;
     const MAX_REFRESH_RETRIES = 3;
     let _refreshResolve = null;  // For 401 retry: resolve when token refreshed
+    let _popupRetried = false;   // Track if popup re-auth was already attempted
     let _isRefreshing = false;   // Prevent concurrent refresh attempts
 
     window.onload = function () {
@@ -76,10 +78,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     accessToken = resp.access_token;
                     _refreshRetryCount = 0;
                     _isRefreshing = false;
+                    _popupRetried = false;
                     const expiresIn = resp.expires_in || 3600;
                     const exp = new Date().getTime() + (expiresIn * 1000);
-                    sessionStorage.setItem('access_token', accessToken);
-                    sessionStorage.setItem('token_expiration', exp);
+                    localStorage.setItem('access_token', accessToken);
+                    localStorage.setItem('token_expiration', exp);
                     scheduleTokenRefresh(expiresIn);
                     // Resolve any pending 401 retry
                     if (_refreshResolve) { _refreshResolve(true); _refreshResolve = null; }
@@ -96,9 +99,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     setTimeout(() => {
                         if (tokenClient) tokenClient.requestAccessToken({ prompt: '' });
                     }, 30000);
+                } else if (!_popupRetried) {
+                    // Last resort: try popup re-authentication
+                    console.log('Silent refresh failed, trying popup re-auth');
+                    _popupRetried = true;
+                    showToast('セッション更新中...再認証ウィンドウが開く場合があります');
+                    setTimeout(() => {
+                        if (tokenClient) tokenClient.requestAccessToken(); // with popup
+                    }, 1000);
                 } else {
-                    // Max retries reached — prompt user to re-login
-                    console.warn('Token refresh failed after max retries');
+                    // Popup also failed — show login overlay
+                    console.warn('Token refresh failed after all attempts');
+                    _popupRetried = false;
                     if (_refreshResolve) { _refreshResolve(false); _refreshResolve = null; }
                     if (!isLoggingOut) {
                         showToast('セッションの更新に失敗しました。再ログインしてください', true);
@@ -122,7 +134,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Background tab support: refresh token when tab becomes active
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible' || !accessToken) return;
-        const exp = parseInt(sessionStorage.getItem('token_expiration') || '0');
+        const exp = parseInt(localStorage.getItem('token_expiration') || '0');
         const now = new Date().getTime();
         const remainingSec = Math.floor((exp - now) / 1000);
         if (remainingSec <= 0) {
@@ -131,6 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tokenClient && !_isRefreshing) {
                 _isRefreshing = true;
                 tokenClient.requestAccessToken({ prompt: '' });
+                setTimeout(() => { _isRefreshing = false; }, 15000);
             }
         } else if (remainingSec < 300) {
             // Token expiring soon — refresh now
@@ -138,6 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (tokenClient && !_isRefreshing) {
                 _isRefreshing = true;
                 tokenClient.requestAccessToken({ prompt: '' });
+                setTimeout(() => { _isRefreshing = false; }, 15000);
             }
         } else {
             // Reschedule refresh (timer may have been delayed while tab was background)
@@ -148,12 +162,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleLogin() { tokenClient && tokenClient.requestAccessToken(); }
     function handleLogout() {
         if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
-        const t = sessionStorage.getItem('access_token');
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        const t = localStorage.getItem('access_token');
         // Clear session first
         accessToken = null;
         isLoggingOut = false;
-        sessionStorage.removeItem('access_token');
-        sessionStorage.removeItem('token_expiration');
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('token_expiration');
         sessionStorage.removeItem('user_email');
         sessionStorage.removeItem('user_name');
         // Revoke token silently (don't wait for callback)
@@ -182,11 +197,37 @@ document.addEventListener('DOMContentLoaded', () => {
             : Math.floor(expiresInSec * 0.5) * 1000;
         refreshTimer = setTimeout(() => {
             console.log('Token refresh: requesting new token silently');
-            if (tokenClient) {
-                // prompt: '' means silent refresh (no popup if user already consented)
+            if (tokenClient && !_isRefreshing) {
+                _isRefreshing = true;
                 tokenClient.requestAccessToken({ prompt: '' });
+                // Safety valve: reset _isRefreshing if no callback within 15s
+                setTimeout(() => { _isRefreshing = false; }, 15000);
             }
         }, refreshAt);
+    }
+
+    // Heartbeat: check token validity every 15 minutes
+    function startHeartbeat() {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(async () => {
+            if (!accessToken) return;
+            try {
+                const res = await fetch('/api/me', {
+                    headers: { 'Authorization': 'Bearer ' + accessToken },
+                    cache: 'no-store'
+                });
+                if (res.status === 401 && tokenClient && !_isRefreshing) {
+                    console.log('Heartbeat: token expired, refreshing');
+                    _isRefreshing = true;
+                    tokenClient.requestAccessToken({ prompt: '' });
+                    setTimeout(() => { _isRefreshing = false; }, 15000);
+                } else if (res.ok) {
+                    console.log('Heartbeat: token valid');
+                }
+            } catch (e) {
+                console.warn('Heartbeat error:', e);
+            }
+        }, 15 * 60 * 1000); // 15 minutes
     }
     async function onLoginSuccess() {
         isLoggingOut = false;  // Reset 401 cascade guard
@@ -194,6 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
         authBtn.textContent = 'ログアウト';
         authBtn.onclick = handleLogout;
         settingsBtn.style.display = '';
+        startHeartbeat(); // Start periodic token validity check
 
         // Verify token is valid by fetching user info first
         try {
@@ -440,8 +482,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 isLoggingOut = true;
                 showToast('セッションが切れました。再ログインしてください', true);
                 accessToken = null;
-                sessionStorage.removeItem('access_token');
-                sessionStorage.removeItem('token_expiration');
+                localStorage.removeItem('access_token');
+                localStorage.removeItem('token_expiration');
                 loginOverlay.classList.remove('hidden');
                 authBtn.textContent = 'Googleでログイン';
                 authBtn.onclick = handleLogin;
