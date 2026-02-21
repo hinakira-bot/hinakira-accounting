@@ -26,8 +26,47 @@ def configure_gemini(api_key: str):
     _get_genai().configure(api_key=api_key)
 
 
-def get_analysis_prompt(history_str: str, input_text_or_type: str) -> str:
+def _format_mapping_str(mapping: list) -> str:
+    """取引先マッピングをプロンプト用の文字列にフォーマット"""
+    if not mapping:
+        return ""
+    lines = []
+    for m in mapping[:80]:  # 上限80件
+        lines.append(f"- {m['counterparty']} → 借方:{m['debit_account']} / 貸方:{m['credit_account']} / 消費税:{m['tax_classification']} / 摘要:{m.get('memo', '')}")
+    return "\n".join(lines)
+
+
+def apply_counterparty_mapping(results: list, mapping: list) -> list:
+    """摘要/内容が空のエントリにのみ、取引先マッピングを適用。
+    内容がある場合（レシート等）はAI判定結果をそのまま使用。"""
+    if not mapping:
+        return results
+    mapping_dict = {m['counterparty']: m for m in mapping}
+    for item in results:
+        cp = item.get('counterparty', '')
+        memo = item.get('memo', '').strip()
+        if cp in mapping_dict and not memo:
+            m = mapping_dict[cp]
+            item['debit_account'] = m['debit_account']
+            item['credit_account'] = m['credit_account']
+            item['tax_classification'] = m['tax_classification']
+            if m.get('memo'):
+                item['memo'] = m['memo']
+    return results
+
+
+def get_analysis_prompt(history_str: str, input_text_or_type: str, mapping_str: str = "") -> str:
     """Generate the standardized AI analysis prompt."""
+    mapping_section = ""
+    if mapping_str:
+        mapping_section = f"""
+    【確定ルール（該当する取引先は必ずこの通りにしてください）】
+    以下の取引先は、ユーザーの過去の実績に基づく確定マッピングです。
+    該当する取引先の場合は、必ずこの科目・消費税・摘要を使用してください。
+    ただし、入力データに具体的な品名や内容が記載されている場合は、その内容に基づいて摘要を作成してください。
+    {mapping_str}
+
+"""
     return f"""
     あなたは日本の税務・会計士です。
     入力されたデータ（{input_text_or_type}）から会計仕訳を作成してください。
@@ -51,7 +90,7 @@ def get_analysis_prompt(history_str: str, input_text_or_type: str) -> str:
     7. **判断不能な場合**:
         - 勘定科目が全く分からない場合は「**雑費**」として処理してください。
 
-    【過去の学習データ (取引先: 摘要 => 科目)】
+    {mapping_section}【参考データ (取引先: 摘要 => 科目)】
     {history_str}
 
     以下のJSON形式（配列）で出力してください。Markdownは不要です。
@@ -69,10 +108,12 @@ def get_analysis_prompt(history_str: str, input_text_or_type: str) -> str:
     """
 
 
-def analyze_csv(csv_bytes: bytes, history: list = None) -> list:
+def analyze_csv(csv_bytes: bytes, history: list = None, mapping: list = None) -> list:
     """Analyze CSV data (credit card / bank statement) using Gemini AI."""
     if history is None:
         history = []
+    if mapping is None:
+        mapping = []
     print("Analyzing CSV...")
     try:
         genai = _get_genai()
@@ -87,31 +128,36 @@ def analyze_csv(csv_bytes: bytes, history: list = None) -> list:
 
         model = genai.GenerativeModel('gemini-2.5-flash')
         history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
+        mapping_str = _format_mapping_str(mapping)
 
-        prompt = get_analysis_prompt(history_str, "CSV明細（クレジットカードまたは銀行）") + f"\n\nデータ:\n{csv_text}"
+        prompt = get_analysis_prompt(history_str, "CSV明細（クレジットカードまたは銀行）", mapping_str) + f"\n\nデータ:\n{csv_text}"
 
         response = model.generate_content(prompt)
         content = clean_json(response.text)
-        return json.loads(content)
+        results = json.loads(content)
+        return apply_counterparty_mapping(results, mapping)
     except Exception as e:
         print(f"Error in analyze_csv: {e}")
         return []
 
 
-def analyze_document(file_bytes: bytes, mime_type: str, history: list = None) -> list:
+def analyze_document(file_bytes: bytes, mime_type: str, history: list = None, mapping: list = None) -> list:
     """Analyze document (image/PDF) using Gemini AI."""
     if history is None:
         history = []
+    if mapping is None:
+        mapping = []
     print(f"Analyzing {mime_type}...")
     genai = _get_genai()
     from PIL import Image
     models = ['gemini-2.5-flash', 'gemini-2.0-flash']
     history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
+    mapping_str = _format_mapping_str(mapping)
 
     for model_name in models:
         try:
             model = genai.GenerativeModel(model_name)
-            prompt = get_analysis_prompt(history_str, "領収書/請求書画像")
+            prompt = get_analysis_prompt(history_str, "領収書/請求書画像", mapping_str)
 
             if mime_type.startswith('image/'):
                 content_part = Image.open(io.BytesIO(file_bytes))
@@ -120,20 +166,35 @@ def analyze_document(file_bytes: bytes, mime_type: str, history: list = None) ->
 
             response = model.generate_content([prompt, content_part])
             content = clean_json(response.text)
-            return json.loads(content)
+            results = json.loads(content)
+            return apply_counterparty_mapping(results, mapping)
         except Exception as e:
             print(f"Error with {model_name}: {e}")
             continue
     return []
 
 
-def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api_key: str) -> list:
+def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api_key: str, mapping: list = None) -> list:
     """Predict debit/credit accounts, tax category, and tax rate for entries using AI."""
+    if mapping is None:
+        mapping = []
     configure_gemini(gemini_api_key)
     genai = _get_genai()
 
     history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
+    mapping_str = _format_mapping_str(mapping)
     valid_accounts_str = ", ".join(valid_accounts)
+
+    mapping_section = ""
+    if mapping_str:
+        mapping_section = f"""
+    【確定ルール（該当する取引先は必ずこの通りにしてください）】
+    以下の取引先は、ユーザーの過去の実績に基づく確定マッピングです。
+    該当する取引先の場合は、必ずこの科目・消費税を使用してください。
+    摘要が空の場合は確定ルールの摘要を使用し、摘要がある場合はその内容を活かしてください。
+    {mapping_str}
+
+"""
 
     input_text = ""
     for item in data:
@@ -160,10 +221,11 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
     ユーザーが既に決定した確定事項です。**絶対に**その値を変更せず、そのまま出力に含めてください。
     空欄になっている項目のみを推論して埋めてください。
 
-    【推論ルール】
-    1. **過去の学習データ**と同じ取引先があれば、その科目を優先してください。
-    2. 一般的な会計知識に基づいて推測してください。
-    3. クレジットカード払いや後払いの場合は、貸方を「未払金」とします（ただし固定指定がある場合は指定を優先）。
+    {mapping_section}【推論ルール】
+    1. 確定ルールに該当する取引先があれば、その科目を必ず使ってください。
+    2. 確定ルールにない取引先は、過去の学習データを参考にしてください。
+    3. どちらにもない場合は、一般的な会計知識に基づいて推測してください。
+    4. クレジットカード払いや後払いの場合は、貸方を「未払金」とします（ただし固定指定がある場合は指定を優先）。
 
     【課税区分の判定ルール】
     - 通常の経費（消耗品、交通費、外注費等の購入）→「課税仕入」
@@ -176,7 +238,7 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
     - それ以外の課税取引 →「10%」（標準税率）
     - 非課税・不課税 →「0%」
 
-    【過去の学習データ】
+    【参考：過去の学習データ】
     {history_str}
 
     【推測対象データ】
@@ -208,6 +270,22 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
                     pred['tax_category'] = original['tax_category']
                 if original.get('tax_rate') and str(original['tax_rate']).strip():
                     pred['tax_rate'] = original['tax_rate']
+
+        # Apply counterparty mapping as safety net (only for entries without memo)
+        if mapping:
+            mapping_dict = {m['counterparty']: m for m in mapping}
+            for pred in predictions:
+                p_idx = int(pred.get('index', -1))
+                original = next((item for item in data if int(item.get('index', -2)) == p_idx), None)
+                if original:
+                    cp = original.get('counterparty', '')
+                    memo = original.get('memo', '').strip()
+                    if cp in mapping_dict and not memo:
+                        m = mapping_dict[cp]
+                        if not (original.get('debit') and str(original['debit']).strip()):
+                            pred['debit'] = m['debit_account']
+                        if not (original.get('credit') and str(original['credit']).strip()):
+                            pred['credit'] = m['credit_account']
 
         return predictions
     except Exception as e:

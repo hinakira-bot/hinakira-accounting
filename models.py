@@ -895,6 +895,52 @@ def get_accounting_history(limit=200, user_id: int = 0) -> list:
         conn.close()
 
 
+def get_counterparty_account_mapping(user_id: int = 0) -> list:
+    """取引先ごとに最も多く使われた科目・消費税・摘要の組み合わせを返す。
+    AIの非決定性を排除し、同じ取引先には常に同じ科目を初期表示するために使用。"""
+    from collections import Counter
+    conn = get_db()
+    try:
+        rows = conn.execute(P("""
+        SELECT je.counterparty,
+               da.name AS debit_account,
+               ca.name AS credit_account,
+               je.tax_classification,
+               je.memo
+        FROM journal_entries je
+        JOIN accounts_master da ON je.debit_account_id = da.id
+        JOIN accounts_master ca ON je.credit_account_id = ca.id
+        WHERE je.is_deleted = 0
+          AND je.counterparty != ''
+          AND je.user_id = ?
+        """), (user_id,)).fetchall()
+
+        # 取引先ごとに (借方, 貸方, 税, 摘要) の出現回数を集計
+        counters = {}
+        for r in rows:
+            cp = r['counterparty']
+            key = (r['debit_account'], r['credit_account'],
+                   r['tax_classification'], r['memo'] or '')
+            if cp not in counters:
+                counters[cp] = Counter()
+            counters[cp][key] += 1
+
+        # 各取引先の最頻値を選択
+        result = []
+        for cp, cnt in counters.items():
+            (debit, credit, tax, memo), _ = cnt.most_common(1)[0]
+            result.append({
+                'counterparty': cp,
+                'debit_account': debit,
+                'credit_account': credit,
+                'tax_classification': tax,
+                'memo': memo,
+            })
+        return result
+    finally:
+        conn.close()
+
+
 def get_existing_entry_keys(user_id: int = 0) -> set:
     """Get set of 'date_amount_counterparty' keys for duplicate detection (user-scoped)."""
     conn = get_db()

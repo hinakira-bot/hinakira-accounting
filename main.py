@@ -458,6 +458,7 @@ def api_drive_inbox_analyze():
     _get_ai_service().configure_gemini(gemini_api_key)
     history = models.get_accounting_history(user_id=uid)
     existing = models.get_existing_entry_keys(user_id=uid)
+    mapping = models.get_counterparty_account_mapping(user_id=uid)
 
     try:
         creds = _get_credentials()(token=access_token)
@@ -481,9 +482,9 @@ def api_drive_inbox_analyze():
             fbytes = buf.read()
 
             if fname.lower().endswith('.csv'):
-                res = _get_ai_service().analyze_csv(fbytes, history)
+                res = _get_ai_service().analyze_csv(fbytes, history, mapping)
             else:
-                res = _get_ai_service().analyze_document(fbytes, mime, history)
+                res = _get_ai_service().analyze_document(fbytes, mime, history, mapping)
 
             # カテゴリ判定（ファイル単位）
             category = determine_evidence_category(res)
@@ -847,6 +848,7 @@ def api_analyze():
 
     history = models.get_accounting_history(user_id=uid)
     existing = models.get_existing_entry_keys(user_id=uid)
+    mapping = models.get_counterparty_account_mapping(user_id=uid)
 
     results = []
     for file in files:
@@ -856,9 +858,9 @@ def api_analyze():
 
         # AI解析を先に実行（カテゴリ判定に必要）
         if fname.endswith('.csv'):
-            res = _get_ai_service().analyze_csv(fbytes, history)
+            res = _get_ai_service().analyze_csv(fbytes, history, mapping)
         else:
-            res = _get_ai_service().analyze_document(fbytes, ftype, history)
+            res = _get_ai_service().analyze_document(fbytes, ftype, history, mapping)
 
         # カテゴリ判定
         category = determine_evidence_category(res)
@@ -891,9 +893,10 @@ def api_predict():
     history = models.get_accounting_history(user_id=uid)
     accounts = models.get_accounts()
     valid_account_names = [a['name'] for a in accounts]
+    mapping = models.get_counterparty_account_mapping(user_id=uid)
 
     try:
-        predictions = _get_ai_service().predict_accounts(data, history, valid_account_names, gemini_api_key)
+        predictions = _get_ai_service().predict_accounts(data, history, valid_account_names, gemini_api_key, mapping)
         return jsonify(predictions)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
