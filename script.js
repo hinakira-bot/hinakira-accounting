@@ -2600,7 +2600,14 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             backupJsonBtn.disabled = true;
             backupJsonBtn.textContent = 'ダウンロード中...';
-            const res = await fetch('/api/backup/download?format=json');
+            const res = await fetch('/api/backup/download?format=json', {
+                headers: accessToken ? { 'Authorization': 'Bearer ' + accessToken } : {},
+                cache: 'no-store'
+            });
+            if (!res.ok) {
+                showToast('バックアップのダウンロードに失敗しました', true);
+                return;
+            }
             const blob = await res.blob();
             downloadBlob(blob, `hinakira_backup_${todayStr()}.json`, 'application/json');
             showToast('JSONバックアップをダウンロードしました');
@@ -2621,12 +2628,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             backupDriveBtn.disabled = true;
             backupDriveBtn.textContent = 'アップロード中...';
-            const res = await fetch('/api/backup/drive', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ access_token: accessToken })
-            });
-            const result = await res.json();
+            const result = await fetchAPI('/api/backup/drive', 'POST', { access_token: accessToken });
             if (result.status === 'success') {
                 showToast(`Driveに保存しました: ${result.filename}`);
             } else {
@@ -2731,8 +2733,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const formData = new FormData();
             const blob = new Blob([JSON.stringify(restoreData)], { type: 'application/json' });
             formData.append('file', blob, 'restore.json');
-            const res = await fetch('/api/backup/restore', { method: 'POST', body: formData });
-            const result = await res.json();
+            const result = await fetchAPI('/api/backup/restore', 'POST', formData);
             if (result.status === 'success') {
                 showRestoreSuccess(result.summary);
                 restoreData = null;
@@ -2763,12 +2764,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             driveListBtn.disabled = true;
             driveListBtn.textContent = '取得中...';
-            const res = await fetch('/api/backup/drive/list', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ access_token: accessToken })
-            });
-            const result = await res.json();
+            const result = await fetchAPI('/api/backup/drive/list', 'POST', { access_token: accessToken });
             if (result.error) {
                 showToast(result.error, true);
                 driveFileList.innerHTML = '';
@@ -2806,12 +2802,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!ok) return;
         try {
             showToast('Driveから復元中...');
-            const res = await fetch('/api/backup/drive/restore', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ access_token: accessToken, file_id: fileId })
-            });
-            const result = await res.json();
+            const result = await fetchAPI('/api/backup/drive/restore', 'POST', { access_token: accessToken, file_id: fileId });
             if (result.status === 'success') {
                 showRestoreSuccess(result.summary);
             } else {
