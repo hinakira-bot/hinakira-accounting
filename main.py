@@ -1226,7 +1226,7 @@ def api_backup_to_drive():
 
     try:
         backup_data = models.get_full_backup(user_id=uid)
-        backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2)
+        backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2, default=str)
         backup_bytes = backup_json.encode('utf-8')
 
         import datetime
