@@ -474,7 +474,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (refreshed && accessToken) {
                     // Token refreshed — retry the original request
                     console.log('Token refreshed, retrying request');
-                    return fetchAPI(url, method, body, true);
+                    // Update access_token in body if present (Drive API endpoints send token in body)
+                    let retryBody = body;
+                    if (body && !(body instanceof FormData) && body.access_token) {
+                        retryBody = { ...body, access_token: accessToken };
+                    } else if (body instanceof FormData && body.has('access_token')) {
+                        retryBody = new FormData();
+                        for (const [key, value] of body.entries()) {
+                            retryBody.append(key, key === 'access_token' ? accessToken : value);
+                        }
+                    }
+                    return fetchAPI(url, method, retryBody, true);
                 }
             }
             // Refresh failed or already retried — show login overlay
