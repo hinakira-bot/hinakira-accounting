@@ -440,19 +440,47 @@ def build_journal_candidates(
                 counterparty = source_name  # 例: 'ゆうちょ銀行'
                 memo = description   # 取引種別をmemoに保存
 
+        tax_class = '10%'  # デフォルト、AIまたは下記ルールで上書き
+
         if source_type == 'card':
             # Credit card: all are expenses
             debit = ''  # To be predicted by AI
             credit = default_credit or '未払金'
         elif source_type == 'bank':
-            if row['direction'] == 'withdrawal':
-                # Bank withdrawal (出金) = expense
-                debit = ''  # To be predicted by AI
-                credit = default_debit or '普通預金'  # default_debit is the bank account name
+            bank_account = default_debit or '普通預金'
+            combined = f"{description} {detail}".strip()
+            # 銀行固有取引は科目を自動設定（個人事業主: 利息・税金は事業主勘定）
+            if any(kw in combined for kw in ['受取利子', '利子', '利息']):
+                # 受取利息 → 借方:普通預金, 貸方:事業主借
+                debit = bank_account
+                credit = '事業主借'
+                tax_class = '不課税'
+            elif any(kw in combined for kw in ['税金', '源泉']):
+                # 源泉税 → 借方:事業主貸, 貸方:普通預金
+                debit = '事業主貸'
+                credit = bank_account
+                tax_class = '不課税'
+            elif any(kw in combined for kw in ['手数料', '料\u3000金', '料 金']):
+                # 手数料 → 借方:支払手数料, 貸方:普通預金
+                debit = '支払手数料'
+                credit = bank_account
+            elif description in ('カード', 'ｶｰﾄﾞ') and not effective_detail:
+                # ATM引出/預入 → 現金勘定
+                if row['direction'] == 'withdrawal':
+                    debit = '現金'
+                    credit = bank_account
+                else:
+                    debit = bank_account
+                    credit = '現金'
+                tax_class = '不課税'
+            elif row['direction'] == 'withdrawal':
+                # 通常の出金 → AIが借方を判定
+                debit = ''
+                credit = bank_account
             else:
-                # Bank deposit (入金) = revenue
-                debit = default_debit or '普通預金'
-                credit = ''  # To be predicted by AI
+                # 通常の入金 → AIが貸方を判定
+                debit = bank_account
+                credit = ''
         else:
             debit = ''
             credit = ''
@@ -462,7 +490,7 @@ def build_journal_candidates(
             'debit_account': debit,
             'credit_account': credit,
             'amount': row['amount'],
-            'tax_classification': '10%',  # Default, AI will refine
+            'tax_classification': tax_class,
             'counterparty': counterparty,
             'memo': memo,
             'source': 'csv_import',
