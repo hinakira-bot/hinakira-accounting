@@ -78,7 +78,7 @@ def get_analysis_prompt(history_str: str, input_text_or_type: str, mapping_str: 
        - 「クレジットカード」「カード払い」「CREDIT」等の記載がある場合のみ → 「**未払金**」
        - 「銀行振込」「引落」と明記されている場合 → 「普通預金」
        - **上記に該当しない場合（レシート・領収書など）→ 「現金」がデフォルト**
-    4. **金額**: 税込金額。
+    4. **金額**: 税込金額。読み取れない場合は 0 としてください（レコードは省略しないこと）。
     5. **消費税区分 (tax_classification)**:
         - 飲食料品（テイクアウト・食料品購入） → 「8%」（軽減税率）
         - それ以外の課税取引 → 「10%」（標準税率）
@@ -99,7 +99,7 @@ def get_analysis_prompt(history_str: str, input_text_or_type: str, mapping_str: 
         "date": "YYYY-MM-DD",
         "debit_account": "借方勘定科目(不明なら雑費)",
         "credit_account": "貸方勘定科目",
-        "amount": 税込金額(数値),
+        "amount": 税込金額(数値、不明なら0),
         "tax_classification": "10%" or "8%" or "非課税" or "不課税",
         "counterparty": "取引先名",
         "memo": "摘要(履歴優先、なければ科目名)"

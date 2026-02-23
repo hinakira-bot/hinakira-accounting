@@ -1305,7 +1305,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     scanSaveBtn.addEventListener('click', async () => {
-        const valid = scanResults.filter(r => parseInt(r.amount) > 0);
+        const valid = scanResults.filter(r => r.amount !== '' && r.amount !== null && r.amount !== undefined);
         if (!valid.length) { showToast('保存するデータがありません', true); return; }
 
         // Check for entries outside fiscal year
