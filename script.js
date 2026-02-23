@@ -1077,23 +1077,42 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
 
         scanStatus.classList.remove('hidden');
-        scanStatusText.textContent = `${files.length}件のファイルをAIで解析中...`;
+        const BATCH_SIZE = 3;
+        const fileArr = Array.from(files);
+        const allResults = [];
+        let errorCount = 0;
 
-        const formData = new FormData();
-        for (let f of files) formData.append('files', f);
-        formData.append('gemini_api_key', apiKey);
-        if (accessToken) formData.append('access_token', accessToken);
+        for (let i = 0; i < fileArr.length; i += BATCH_SIZE) {
+            const batch = fileArr.slice(i, i + BATCH_SIZE);
+            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+            scanStatusText.textContent = `AIで解析中... (${Math.min(i + BATCH_SIZE, fileArr.length)}/${fileArr.length}件)`;
 
-        try {
-            const data = await fetchAPI('/api/analyze', 'POST', formData);
-            if (data.error) throw new Error(data.error);
-            scanResults = append ? [...scanResults, ...data] : data;
+            const formData = new FormData();
+            for (let f of batch) formData.append('files', f);
+            formData.append('gemini_api_key', apiKey);
+            if (accessToken) formData.append('access_token', accessToken);
+
+            try {
+                const data = await fetchAPI('/api/analyze', 'POST', formData);
+                if (data.error) throw new Error(data.error);
+                allResults.push(...data);
+            } catch (err) {
+                console.error(`Batch ${batchNum} error:`, err);
+                errorCount += batch.length;
+            }
+        }
+
+        if (allResults.length > 0) {
+            scanResults = append ? [...scanResults, ...allResults] : allResults;
             renderScanResults();
-            scanStatus.classList.add('hidden');
             scanResultsCard.classList.remove('hidden');
-        } catch (err) {
-            scanStatus.classList.add('hidden');
-            showToast('解析エラー: ' + err.message, true);
+        }
+        scanStatus.classList.add('hidden');
+
+        if (errorCount > 0 && allResults.length > 0) {
+            showToast(`${allResults.length}件解析成功、${errorCount}件失敗`, true);
+        } else if (errorCount > 0) {
+            showToast(`解析エラー: ${errorCount}件が失敗しました`, true);
         }
     }
 

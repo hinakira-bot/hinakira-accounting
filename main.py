@@ -844,11 +844,14 @@ def api_analyze():
     if not gemini_api_key:
         return jsonify({"error": "Missing Gemini API key"}), 401
 
-    _get_ai_service().configure_gemini(gemini_api_key)
-
-    history = models.get_accounting_history(user_id=uid)
-    existing = models.get_existing_entry_keys(user_id=uid)
-    mapping = models.get_counterparty_account_mapping(user_id=uid)
+    try:
+        _get_ai_service().configure_gemini(gemini_api_key)
+        history = models.get_accounting_history(user_id=uid)
+        existing = models.get_existing_entry_keys(user_id=uid)
+        mapping = models.get_counterparty_account_mapping(user_id=uid)
+    except Exception as e:
+        print(f"[/api/analyze] Init error: {e}", flush=True)
+        return jsonify({"error": f"初期化エラー: {str(e)}"}), 500
 
     results = []
     for file in files:
@@ -856,25 +859,35 @@ def api_analyze():
         ftype = file.content_type
         fbytes = file.read()
 
-        # AI解析を先に実行（カテゴリ判定に必要）
-        if fname.endswith('.csv'):
-            res = _get_ai_service().analyze_csv(fbytes, history, mapping)
-        else:
-            res = _get_ai_service().analyze_document(fbytes, ftype, history, mapping)
+        try:
+            # AI解析を先に実行（カテゴリ判定に必要）
+            if fname.endswith('.csv'):
+                res = _get_ai_service().analyze_csv(fbytes, history, mapping)
+            else:
+                res = _get_ai_service().analyze_document(fbytes, ftype, history, mapping)
+        except Exception as e:
+            print(f"[/api/analyze] AI error for {file.filename}: {e}", flush=True)
+            res = []
 
         # カテゴリ判定
         category = determine_evidence_category(res)
 
-        # カテゴリ付きでDriveにアップロード
+        # カテゴリ付きでDriveにアップロード（失敗しても解析結果は返す）
         ev_url = ""
         if access_token:
-            ev_url = upload_to_drive_processed(fbytes, file.filename, ftype, access_token, category=category)
+            try:
+                ev_url = upload_to_drive_processed(fbytes, file.filename, ftype, access_token, category=category)
+            except Exception as e:
+                print(f"[/api/analyze] Drive error for {file.filename}: {e}", flush=True)
 
         for item in res:
             item['evidence_url'] = ev_url
             item['evidence_category'] = category
-            key = f"{item.get('date')}_{str(item.get('amount'))}_{models._normalize_counterparty(item.get('counterparty', ''))}"
-            item['is_duplicate'] = key in existing
+            try:
+                key = f"{item.get('date')}_{str(item.get('amount'))}_{models._normalize_counterparty(item.get('counterparty', ''))}"
+                item['is_duplicate'] = key in existing
+            except Exception:
+                item['is_duplicate'] = False
         results.extend(res)
 
     return jsonify(results)
