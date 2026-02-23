@@ -1077,7 +1077,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
 
         scanStatus.classList.remove('hidden');
-        const BATCH_SIZE = 3;
+        const BATCH_SIZE = 2;
         const fileArr = Array.from(files);
         const allResults = [];
         let errorCount = 0;
