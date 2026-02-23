@@ -1290,6 +1290,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderScanResults();
             });
         });
+
+        // 読み取り件数・合計金額サマリ表示
+        let scanCountEl = document.getElementById('scan-count-summary');
+        if (!scanCountEl) {
+            scanCountEl = document.createElement('div');
+            scanCountEl.id = 'scan-count-summary';
+            scanCountEl.style.cssText = 'padding:0.5rem 0;font-size:0.8125rem;color:var(--text-secondary);text-align:right;';
+            const tableWrap = scanTbody.closest('.table-wrap');
+            tableWrap.parentNode.insertBefore(scanCountEl, tableWrap.nextSibling);
+        }
+        const totalAmount = scanResults.reduce((sum, r) => sum + (parseInt(r.amount) || 0), 0);
+        scanCountEl.textContent = `${scanResults.length}件の仕訳 ― 合計金額: ${totalAmount.toLocaleString()}円`;
     }
 
     scanSaveBtn.addEventListener('click', async () => {
@@ -1998,6 +2010,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function hideLedgerDetail() {
         ledgerDetail.classList.add('hidden');
+        updateHeaderFiscalYear();  // ヘッダーを「2025年度」に戻す
         // Show sub-panels again
         document.querySelectorAll('.ledger-sub-panel').forEach(p => {
             if (p.id === 'ledger-tab-' + currentLedgerSubTab) p.classList.add('active');
@@ -2019,6 +2032,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await fetchAPI(`/api/ledger/${accountId}?${params.toString()}`);
             const acc = data.account || {};
             ledgerDetailTitle.textContent = `${acc.code || ''} ${acc.name || ''}`;
+            headerFiscalYear.textContent = `${getSelectedFiscalYear()}年度 ― ${acc.name || ''}`;
 
             // Hide sub-panels, show detail
             document.querySelectorAll('.ledger-sub-panel').forEach(p => p.classList.remove('active'));
